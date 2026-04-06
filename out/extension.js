@@ -23804,7 +23804,8 @@ var McpManager = class {
           args: Array.isArray(e.args) ? e.args.map(String) : [],
           env: e.env && typeof e.env === "object" ? e.env : void 0
         };
-        return { name, enabled: true, config: cfg };
+        const instructions = typeof e.instructions === "string" ? e.instructions.trim() : void 0;
+        return { name, enabled: true, config: cfg, ...instructions ? { instructions } : {} };
       }).filter((c) => c.config.transport === "sse" || c.config.command);
     } catch {
       return [];
@@ -23950,6 +23951,10 @@ var McpManager = class {
     }
     lines.push("", "Available MCP tools:");
     for (const s of connected) {
+      lines.push("");
+      if (s.config.instructions) {
+        lines.push(`[${s.config.name}] Instructions: ${s.config.instructions}`);
+      }
       for (const t of s.tools) {
         lines.push("");
         lines.push(`Server: ${s.config.name}  Tool: ${t.name}`);
