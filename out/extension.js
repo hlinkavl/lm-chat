@@ -23991,6 +23991,7 @@ var ChatViewProvider = class {
     this.toolIterations = 0;
     this.isProcessingTools = false;
     this.currentModel = "";
+    this.systemPromptCache = "";
     this.client = new LmStudioClient();
     this.contextProvider = new ContextProvider();
     this.toolExecutor = new ToolExecutor();
@@ -24333,14 +24334,10 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
       error: health.error
     });
   }
-  // ── User message handler ─────────────────────────────────────────────────
-  async handleUserMessage(text) {
-    if (!this.webviewView) {
-      return;
-    }
-    this.toolIterations = 0;
+  // ── System prompt builder ────────────────────────────────────────────────
+  async buildSystemPrompt() {
     const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
-    let systemPrompt = config2.get("systemPrompt", "");
+    let prompt = config2.get("systemPrompt", "");
     if (this.workspaceMode) {
       const wsFolder = vscode4.workspace.workspaceFolders?.[0];
       const wsPath = wsFolder?.uri.fsPath ?? "(no workspace)";
@@ -24352,7 +24349,7 @@ Shell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace 
 command here
 </run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands \u2014 e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ""}` : `
 Shell execution is DISABLED \u2014 do not use <run_bash>, it will be blocked.`;
-      systemPrompt += `
+      prompt += `
 
 Current workspace: ${wsPath}
 
@@ -24361,10 +24358,20 @@ ${tree}
 
 IMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist \u2014 use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
     }
-    systemPrompt += this.mcpManager.getToolsSystemPromptBlock();
+    prompt += this.mcpManager.getToolsSystemPromptBlock();
+    return prompt;
+  }
+  // ── User message handler ─────────────────────────────────────────────────
+  async handleUserMessage(text) {
+    if (!this.webviewView) {
+      return;
+    }
+    this.toolIterations = 0;
+    this.systemPromptCache = await this.buildSystemPrompt();
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
     const messages = [];
-    if (systemPrompt) {
-      messages.push({ role: "system", content: systemPrompt });
+    if (this.systemPromptCache) {
+      messages.push({ role: "system", content: this.systemPromptCache });
     }
     messages.push(...this.trimHistory(this.conversationHistory, config2));
     messages.push({ role: "user", content: text });
@@ -24839,6 +24846,12 @@ Error: ${msg}`
         }
       }
       if (tool.type === "mcp_call") {
+        this.webviewView.webview.postMessage({
+          type: "toolMcpCall",
+          id,
+          server: tool.server,
+          tool: tool.tool
+        });
         try {
           const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
           this.conversationHistory.push({
@@ -24849,6 +24862,7 @@ ${output}`
           this.saveHistory();
           this.webviewView.webview.postMessage({
             type: "toolMcpResult",
+            id,
             server: tool.server,
             tool: tool.tool,
             output,
@@ -24864,6 +24878,7 @@ Error: ${msg}`
           this.saveHistory();
           this.webviewView.webview.postMessage({
             type: "toolMcpResult",
+            id,
             server: tool.server,
             tool: tool.tool,
             output: msg,
@@ -24903,31 +24918,9 @@ Error: ${msg}`
       return;
     }
     const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
-    let systemPrompt = config2.get("systemPrompt", "");
-    if (this.workspaceMode) {
-      const wsFolder = vscode4.workspace.workspaceFolders?.[0];
-      const wsPath = wsFolder?.uri.fsPath ?? "(no workspace)";
-      const tree = await this.contextProvider.getWorkspaceTree();
-      const isWindows = process.platform === "win32";
-      const shellNote = this.shellEnabled ? `
-Shell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace \u2014 commands can read and write anywhere on the system. You may run commands with:
-<run_bash>
-command here
-</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands \u2014 e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ""}` : `
-Shell execution is DISABLED \u2014 do not use <run_bash>, it will be blocked.`;
-      systemPrompt += `
-
-Current workspace: ${wsPath}
-
-File tree (use these exact paths in tool calls):
-${tree}
-
-IMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist \u2014 use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
-    }
-    systemPrompt += this.mcpManager.getToolsSystemPromptBlock();
     const messages = [];
-    if (systemPrompt) {
-      messages.push({ role: "system", content: systemPrompt });
+    if (this.systemPromptCache) {
+      messages.push({ role: "system", content: this.systemPromptCache });
     }
     messages.push(...this.trimHistory(this.conversationHistory, config2));
     let fullResponse = "";

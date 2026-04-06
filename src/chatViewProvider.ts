@@ -33,6 +33,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private toolIterations: number = 0;
     private isProcessingTools: boolean = false;
     private currentModel: string = '';
+    private systemPromptCache: string = '';
 
     constructor(
         private readonly extensionUri: vscode.Uri,
@@ -409,35 +410,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    // ── System prompt builder ────────────────────────────────────────────────
+
+    private async buildSystemPrompt(): Promise<string> {
+        const config = vscode.workspace.getConfiguration('lmStudioChat');
+        let prompt = config.get<string>('systemPrompt', '');
+        if (this.workspaceMode) {
+            const wsFolder  = vscode.workspace.workspaceFolders?.[0];
+            const wsPath    = wsFolder?.uri.fsPath ?? '(no workspace)';
+            const tree      = await this.contextProvider.getWorkspaceTree();
+            const isWindows = process.platform === 'win32';
+            const shellNote = this.shellEnabled
+                ? `\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. You may run commands with:\n<run_bash>\ncommand here\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
+                : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
+            prompt += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
+        }
+        prompt += this.mcpManager.getToolsSystemPromptBlock();
+        return prompt;
+    }
+
     // ── User message handler ─────────────────────────────────────────────────
 
     private async handleUserMessage(text: string): Promise<void> {
         if (!this.webviewView) { return; }
 
-        // Reset per-turn tool iteration counter
+        // Reset per-turn counters and build system prompt once for the whole turn
         this.toolIterations = 0;
+        this.systemPromptCache = await this.buildSystemPrompt();
 
-        // Build messages array
         const config = vscode.workspace.getConfiguration('lmStudioChat');
-        let systemPrompt = config.get<string>('systemPrompt', '');
-
-        // Inject workspace tree when workspace mode is on
-        if (this.workspaceMode) {
-            const wsFolder = vscode.workspace.workspaceFolders?.[0];
-            const wsPath   = wsFolder?.uri.fsPath ?? '(no workspace)';
-            const tree     = await this.contextProvider.getWorkspaceTree();
-            const isWindows = process.platform === 'win32';
-            const shellNote = this.shellEnabled
-                ? `\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. You may run commands with:\n<run_bash>\ncommand here\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
-                : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
-            systemPrompt  += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
-        }
-
-        systemPrompt += this.mcpManager.getToolsSystemPromptBlock();
-
         const messages: ChatMessage[] = [];
-        if (systemPrompt) {
-            messages.push({ role: 'system', content: systemPrompt });
+        if (this.systemPromptCache) {
+            messages.push({ role: 'system', content: this.systemPromptCache });
         }
 
         messages.push(...this.trimHistory(this.conversationHistory, config));
@@ -850,6 +854,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             // ── mcp_call ─────────────────────────────────────────────────────
             if (tool.type === 'mcp_call') {
+                // Show card immediately in "calling" state
+                this.webviewView.webview.postMessage({
+                    type: 'toolMcpCall', id,
+                    server: tool.server, tool: tool.tool,
+                });
                 try {
                     const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
                     this.conversationHistory.push({
@@ -858,7 +867,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                     this.saveHistory();
                     this.webviewView.webview.postMessage({
-                        type: 'toolMcpResult',
+                        type: 'toolMcpResult', id,
                         server: tool.server, tool: tool.tool,
                         output, success: true,
                     });
@@ -870,7 +879,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                     this.saveHistory();
                     this.webviewView.webview.postMessage({
-                        type: 'toolMcpResult',
+                        type: 'toolMcpResult', id,
                         server: tool.server, tool: tool.tool,
                         output: msg, success: false,
                     });
@@ -911,25 +920,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async continueConversation(): Promise<void> {
         if (!this.webviewView) { return; }
 
+        // Reuse system prompt built at start of this turn — avoids redundant workspace tree reads
         const config = vscode.workspace.getConfiguration('lmStudioChat');
-        let systemPrompt = config.get<string>('systemPrompt', '');
-
-        if (this.workspaceMode) {
-            const wsFolder = vscode.workspace.workspaceFolders?.[0];
-            const wsPath   = wsFolder?.uri.fsPath ?? '(no workspace)';
-            const tree     = await this.contextProvider.getWorkspaceTree();
-            const isWindows = process.platform === 'win32';
-            const shellNote = this.shellEnabled
-                ? `\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. You may run commands with:\n<run_bash>\ncommand here\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
-                : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
-            systemPrompt  += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
-        }
-
-        systemPrompt += this.mcpManager.getToolsSystemPromptBlock();
-
         const messages: ChatMessage[] = [];
-        if (systemPrompt) {
-            messages.push({ role: 'system', content: systemPrompt });
+        if (this.systemPromptCache) {
+            messages.push({ role: 'system', content: this.systemPromptCache });
         }
         messages.push(...this.trimHistory(this.conversationHistory, config));
 
