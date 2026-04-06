@@ -99,8 +99,18 @@ export class McpManager {
     private readConfigFile(): McpServerConfig[] {
         try {
             const raw    = fs.readFileSync(this.configPath, 'utf-8');
-            const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
+            const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+            if (!parsed?.mcpServers || typeof parsed.mcpServers !== 'object') { return []; }
+
+            return Object.entries(parsed.mcpServers).map(([name, entry]) => {
+                const e = entry as Record<string, unknown>;
+                const cfg: McpStdioConfig | McpSseConfig = e.url
+                    ? { transport: 'sse',   url: String(e.url) }
+                    : { transport: 'stdio', command: String(e.command ?? ''),
+                        args: Array.isArray(e.args) ? e.args.map(String) : [],
+                        env:  e.env && typeof e.env === 'object' ? e.env as Record<string,string> : undefined };
+                return { name, enabled: true, config: cfg };
+            }).filter(c => c.config.transport === 'sse' || (c.config as McpStdioConfig).command);
         } catch {
             return [];
         }
@@ -108,7 +118,17 @@ export class McpManager {
 
     private writeConfigFile(configs: McpServerConfig[]): void {
         fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
-        fs.writeFileSync(this.configPath, JSON.stringify(configs, null, 2), 'utf-8');
+        const mcpServers: Record<string, unknown> = {};
+        for (const c of configs) {
+            if (c.config.transport === 'sse') {
+                mcpServers[c.name] = { url: c.config.url };
+            } else {
+                const entry: Record<string, unknown> = { command: c.config.command, args: c.config.args ?? [] };
+                if (c.config.env) { entry.env = c.config.env; }
+                mcpServers[c.name] = entry;
+            }
+        }
+        fs.writeFileSync(this.configPath, JSON.stringify({ mcpServers }, null, 2), 'utf-8');
     }
 
     getServerConfigs(): McpServerConfig[] {

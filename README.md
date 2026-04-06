@@ -58,23 +58,23 @@ MCP servers are configured via a `mcp.json` file. Open it with:
 Ctrl+Shift+P → LM Studio Chat: Open MCP Config File
 ```
 
-Example `mcp.json`:
+The format is identical to VS Code and Claude Code:
 
 ```json
-[
-  {
-    "name": "my-server",
-    "enabled": true,
-    "config": {
-      "transport": "stdio",
-      "command": "node",
-      "args": ["/path/to/server/index.js"]
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "@scope/server-pkg"]
+    },
+    "my-sse-server": {
+      "url": "http://localhost:3000/sse"
     }
   }
-]
+}
 ```
 
-For SSE transport, use `"transport": "sse", "url": "http://localhost:3000/sse"` inside `config`.
+Optional `env` object can be added to any server entry for environment variables.
 
 The file is watched — changes apply without restarting VS Code.
 

@@ -567,19 +567,18 @@
                 <div class="mcp-add-title">configure servers by editing the config file</div>
                 <button class="mcp-btn-add" id="mcpEditConfigBtn">open mcp.json</button>
                 <div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.6">
-                    Format — JSON array of server objects:
+                    Same format as VS Code / Claude Code:
                 </div>
-                <pre style="font-size:10px;background:#1a1a1a;border:1px solid var(--border);border-radius:3px;padding:7px 10px;margin-top:5px;overflow-x:auto;line-height:1.55;color:var(--fg)">[{
-  "name": "my-server",
-  "enabled": true,
-  "config": {
-    "transport": "stdio",
-    "command": "node",
-    "args": ["/path/to/server.js"]
+                <pre style="font-size:10px;background:#1a1a1a;border:1px solid var(--border);border-radius:3px;padding:7px 10px;margin-top:5px;overflow-x:auto;line-height:1.55;color:var(--fg)">{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "@scope/server-pkg"]
+    }
   }
-}]</pre>
+}</pre>
                 <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.6">
-                    SSE transport: use <code style="font-size:10px;background:#2d2d2d;padding:1px 3px;border-radius:2px">"transport":"sse","url":"http://..."</code> inside <code style="font-size:10px;background:#2d2d2d;padding:1px 3px;border-radius:2px">config</code>. Save the file — changes apply automatically.
+                    For SSE: use <code style="font-size:10px;background:#2d2d2d;padding:1px 3px;border-radius:2px">"url": "http://..."</code> instead of command/args. Save the file — changes apply automatically.
                 </div>
             </div>
         </div>
