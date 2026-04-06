@@ -64,12 +64,17 @@ Example `mcp.json`:
 [
   {
     "name": "my-server",
-    "transport": "stdio",
-    "command": "node",
-    "args": ["/path/to/server/index.js"]
+    "enabled": true,
+    "config": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["/path/to/server/index.js"]
+    }
   }
 ]
 ```
+
+For SSE transport, use `"transport": "sse", "url": "http://localhost:3000/sse"` inside `config`.
 
 The file is watched — changes apply without restarting VS Code.
 

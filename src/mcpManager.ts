@@ -49,7 +49,7 @@ export class McpManager {
     private clients: Map<string, Client> = new Map();
     private statusChangeCallback?: () => void;
     private configPath: string;
-    private watcher?: vscode.FileSystemWatcher;
+    private fsWatcher?: fs.FSWatcher;
     private reloadDebounce?: ReturnType<typeof setTimeout>;
 
     constructor(private readonly context: vscode.ExtensionContext) {
@@ -67,17 +67,18 @@ export class McpManager {
             await this.context.globalState.update('mcpServers', undefined);
         }
 
-        // Watch mcp.json for external edits
-        const watchDir = vscode.Uri.file(path.dirname(this.configPath));
-        const pattern  = new vscode.RelativePattern(watchDir, 'mcp.json');
-        this.watcher   = vscode.workspace.createFileSystemWatcher(pattern);
+        // Watch mcp.json for external edits using fs.watch (reliable for globalStorage outside workspace)
         const scheduleReload = () => {
             clearTimeout(this.reloadDebounce);
             this.reloadDebounce = setTimeout(() => this.reloadFromFile(), 400);
         };
-        this.watcher.onDidChange(scheduleReload);
-        this.watcher.onDidCreate(scheduleReload);
-        this.context.subscriptions.push(this.watcher);
+        try {
+            this.fsWatcher = fs.watch(path.dirname(this.configPath), (event, filename) => {
+                if (filename === 'mcp.json') { scheduleReload(); }
+            });
+        } catch {
+            // Directory may not exist yet; watcher will be absent but manual reload still works
+        }
 
         // Connect enabled servers
         const configs = this.readConfigFile();
@@ -86,6 +87,7 @@ export class McpManager {
 
     dispose(): void {
         clearTimeout(this.reloadDebounce);
+        this.fsWatcher?.close();
         for (const [, client] of this.clients) {
             client.close().catch(() => {/* best-effort */});
         }
@@ -131,14 +133,25 @@ export class McpManager {
         const oldNames   = new Set(this.states.keys());
         const newNames   = new Set(newConfigs.map(c => c.name));
 
-        // Disconnect removed servers
+        // Disconnect removed servers or servers whose config/enabled state changed
         for (const name of oldNames) {
-            if (!newNames.has(name)) { await this.disconnectServer(name); }
+            if (!newNames.has(name)) {
+                await this.disconnectServer(name);
+            } else {
+                const newCfg   = newConfigs.find(c => c.name === name)!;
+                const oldState = this.states.get(name)!;
+                const configChanged  = JSON.stringify(newCfg.config) !== JSON.stringify(oldState.config.config);
+                const enabledChanged = newCfg.enabled !== oldState.config.enabled;
+                if (configChanged || enabledChanged) {
+                    await this.disconnectServer(name);
+                }
+            }
         }
 
-        // Connect newly added enabled servers
+        // Connect newly added or newly enabled servers (after above disconnects)
+        const currentNames = new Set(this.states.keys());
         for (const cfg of newConfigs) {
-            if (cfg.enabled && !oldNames.has(cfg.name)) {
+            if (cfg.enabled && !currentNames.has(cfg.name)) {
                 await this.connectServer(cfg);
             }
         }

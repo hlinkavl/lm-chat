@@ -7303,10 +7303,10 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode6 = __toESM(require("vscode"));
+var vscode5 = __toESM(require("vscode"));
 
 // src/chatViewProvider.ts
-var vscode5 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 var fs2 = __toESM(require("fs"));
 var path4 = __toESM(require("path"));
 var crypto2 = __toESM(require("crypto"));
@@ -7984,7 +7984,6 @@ function collapseContext(ops, ctx) {
 }
 
 // src/mcpManager.ts
-var vscode4 = __toESM(require("vscode"));
 var fs = __toESM(require("fs"));
 var path3 = __toESM(require("path"));
 
@@ -23765,21 +23764,24 @@ var McpManager = class {
       this.writeConfigFile(legacy);
       await this.context.globalState.update("mcpServers", void 0);
     }
-    const watchDir = vscode4.Uri.file(path3.dirname(this.configPath));
-    const pattern = new vscode4.RelativePattern(watchDir, "mcp.json");
-    this.watcher = vscode4.workspace.createFileSystemWatcher(pattern);
     const scheduleReload = () => {
       clearTimeout(this.reloadDebounce);
       this.reloadDebounce = setTimeout(() => this.reloadFromFile(), 400);
     };
-    this.watcher.onDidChange(scheduleReload);
-    this.watcher.onDidCreate(scheduleReload);
-    this.context.subscriptions.push(this.watcher);
+    try {
+      this.fsWatcher = fs.watch(path3.dirname(this.configPath), (event, filename) => {
+        if (filename === "mcp.json") {
+          scheduleReload();
+        }
+      });
+    } catch {
+    }
     const configs = this.readConfigFile();
     await Promise.allSettled(configs.filter((c) => c.enabled).map((c) => this.connectServer(c)));
   }
   dispose() {
     clearTimeout(this.reloadDebounce);
+    this.fsWatcher?.close();
     for (const [, client] of this.clients) {
       client.close().catch(() => {
       });
@@ -23819,10 +23821,19 @@ var McpManager = class {
     for (const name of oldNames) {
       if (!newNames.has(name)) {
         await this.disconnectServer(name);
+      } else {
+        const newCfg = newConfigs.find((c) => c.name === name);
+        const oldState = this.states.get(name);
+        const configChanged = JSON.stringify(newCfg.config) !== JSON.stringify(oldState.config.config);
+        const enabledChanged = newCfg.enabled !== oldState.config.enabled;
+        if (configChanged || enabledChanged) {
+          await this.disconnectServer(name);
+        }
       }
     }
+    const currentNames = new Set(this.states.keys());
     for (const cfg of newConfigs) {
-      if (cfg.enabled && !oldNames.has(cfg.name)) {
+      if (cfg.enabled && !currentNames.has(cfg.name)) {
         await this.connectServer(cfg);
       }
     }
@@ -23988,13 +23999,13 @@ var ChatViewProvider = class {
           await this.handleHealthCheck();
           break;
         case "updateSystemPrompt": {
-          const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
-          await config2.update("systemPrompt", message.text, vscode5.ConfigurationTarget.Global);
+          const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
+          await config2.update("systemPrompt", message.text, vscode4.ConfigurationTarget.Global);
           break;
         }
         case "openSettings":
         case "changeEndpoint":
-          await vscode5.commands.executeCommand("lmStudioChat.setEndpoint");
+          await vscode4.commands.executeCommand("lmStudioChat.setEndpoint");
           break;
         case "selectModel":
           await this.showModelPicker();
@@ -24028,8 +24039,8 @@ var ChatViewProvider = class {
           if (!fs3.existsSync(configPath)) {
             fs3.writeFileSync(configPath, "[]", "utf-8");
           }
-          const doc = await vscode5.workspace.openTextDocument(vscode5.Uri.file(configPath));
-          await vscode5.window.showTextDocument(doc, { preview: false });
+          const doc = await vscode4.workspace.openTextDocument(vscode4.Uri.file(configPath));
+          await vscode4.window.showTextDocument(doc, { preview: false });
           break;
         }
         case "getMcpStatus":
@@ -24197,7 +24208,7 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
     this.context.globalState.update("chatHistory", this.conversationHistory);
   }
   sendWorkspaceStatus() {
-    const wsFolder = vscode5.workspace.workspaceFolders?.[0];
+    const wsFolder = vscode4.workspace.workspaceFolders?.[0];
     this.webviewView?.webview.postMessage({
       type: "workspaceStatus",
       active: this.workspaceMode,
@@ -24237,14 +24248,14 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
     this.isProcessingTools = false;
     this.saveHistory();
     this.webviewView?.webview.postMessage({ type: "reset" });
-    vscode5.window.showInformationMessage("LM Studio Chat: Conversation cleared");
+    vscode4.window.showInformationMessage("LM Studio Chat: Conversation cleared");
   }
   async refreshHealthCheck() {
     await this.handleHealthCheck();
     this.sendCurrentConfig();
   }
   sendCurrentConfig() {
-    const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
     this.webviewView?.webview.postMessage({
       type: "configUpdate",
       endpoint: config2.get("endpoint", "http://127.0.0.1:1234"),
@@ -24255,10 +24266,10 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
   async showModelPicker() {
     const models = await this.client.fetchModels();
     if (models.length === 0) {
-      vscode5.window.showWarningMessage("No models available. Is LM Studio running?");
+      vscode4.window.showWarningMessage("No models available. Is LM Studio running?");
       return;
     }
-    const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
     const currentModel = config2.get("model", "");
     const items = [
       {
@@ -24271,7 +24282,7 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
         description: m === currentModel ? "(current)" : ""
       }))
     ];
-    const selected = await vscode5.window.showQuickPick(items, {
+    const selected = await vscode4.window.showQuickPick(items, {
       placeHolder: "Select a model to chat with",
       title: "LM Studio \u2014 Select Model"
     });
@@ -24279,15 +24290,15 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
       return;
     }
     const newModel = selected.label.startsWith("$(sparkle)") ? "" : selected.label;
-    await config2.update("model", newModel, vscode5.ConfigurationTarget.Global);
-    vscode5.window.showInformationMessage(`Model set to: ${newModel || "Auto"}`);
+    await config2.update("model", newModel, vscode4.ConfigurationTarget.Global);
+    vscode4.window.showInformationMessage(`Model set to: ${newModel || "Auto"}`);
     await this.handleHealthCheck();
     this.sendCurrentConfig();
   }
   async handleHealthCheck() {
     const health = await this.client.checkHealth();
     if (health.ok && health.models?.length) {
-      const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
+      const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
       const configured = config2.get("model", "");
       this.currentModel = configured || health.models[0];
     }
@@ -24304,10 +24315,10 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
       return;
     }
     this.toolIterations = 0;
-    const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
     let systemPrompt = config2.get("systemPrompt", "");
     if (this.workspaceMode) {
-      const wsFolder = vscode5.workspace.workspaceFolders?.[0];
+      const wsFolder = vscode4.workspace.workspaceFolders?.[0];
       const wsPath = wsFolder?.uri.fsPath ?? "(no workspace)";
       const tree = await this.contextProvider.getWorkspaceTree();
       const isWindows = process.platform === "win32";
@@ -24845,7 +24856,7 @@ Error: ${msg}`
   }
   continueAfterToolResult() {
     this.toolIterations++;
-    const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
     const maxIter = config2.get("maxToolIterations", 10);
     if (this.toolIterations >= maxIter) {
       this.webviewView?.webview.postMessage({
@@ -24867,10 +24878,10 @@ Error: ${msg}`
     if (!this.webviewView) {
       return;
     }
-    const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
     let systemPrompt = config2.get("systemPrompt", "");
     if (this.workspaceMode) {
-      const wsFolder = vscode5.workspace.workspaceFolders?.[0];
+      const wsFolder = vscode4.workspace.workspaceFolders?.[0];
       const wsPath = wsFolder?.uri.fsPath ?? "(no workspace)";
       const tree = await this.contextProvider.getWorkspaceTree();
       const isWindows = process.platform === "win32";
@@ -25033,22 +25044,22 @@ function diffSearchReplace(search, replace) {
 function activate(context) {
   const provider = new ChatViewProvider(context.extensionUri, context);
   context.subscriptions.push(
-    vscode6.window.registerWebviewViewProvider(
+    vscode5.window.registerWebviewViewProvider(
       "lmStudioChat.chatView",
       provider,
       { webviewOptions: { retainContextWhenHidden: true } }
     )
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("lmStudioChat.newChat", () => {
+    vscode5.commands.registerCommand("lmStudioChat.newChat", () => {
       provider.resetConversation();
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("lmStudioChat.setEndpoint", async () => {
-      const config2 = vscode6.workspace.getConfiguration("lmStudioChat");
+    vscode5.commands.registerCommand("lmStudioChat.setEndpoint", async () => {
+      const config2 = vscode5.workspace.getConfiguration("lmStudioChat");
       const current = config2.get("endpoint", "http://127.0.0.1:1234");
-      const newEndpoint = await vscode6.window.showInputBox({
+      const newEndpoint = await vscode5.window.showInputBox({
         prompt: "Enter LM Studio server URL",
         value: current,
         placeHolder: "http://127.0.0.1:1234",
@@ -25065,19 +25076,19 @@ function activate(context) {
         }
       });
       if (newEndpoint && newEndpoint !== current) {
-        await config2.update("endpoint", newEndpoint, vscode6.ConfigurationTarget.Global);
-        vscode6.window.showInformationMessage(`LM Studio endpoint set to: ${newEndpoint}`);
+        await config2.update("endpoint", newEndpoint, vscode5.ConfigurationTarget.Global);
+        vscode5.window.showInformationMessage(`LM Studio endpoint set to: ${newEndpoint}`);
         provider.refreshHealthCheck();
       }
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("lmStudioChat.selectModel", async () => {
+    vscode5.commands.registerCommand("lmStudioChat.selectModel", async () => {
       await provider.showModelPicker();
     })
   );
   context.subscriptions.push(
-    vscode6.commands.registerCommand("lmStudioChat.openMcpConfig", async () => {
+    vscode5.commands.registerCommand("lmStudioChat.openMcpConfig", async () => {
       const fs3 = await import("fs");
       const path5 = await import("path");
       const configPath = provider.mcpManager.getConfigFilePath();
@@ -25085,8 +25096,8 @@ function activate(context) {
       if (!fs3.existsSync(configPath)) {
         fs3.writeFileSync(configPath, "[]", "utf-8");
       }
-      const doc = await vscode6.workspace.openTextDocument(vscode6.Uri.file(configPath));
-      await vscode6.window.showTextDocument(doc, { preview: false });
+      const doc = await vscode5.workspace.openTextDocument(vscode5.Uri.file(configPath));
+      await vscode5.window.showTextDocument(doc, { preview: false });
     })
   );
   console.log("LM Studio Chat extension activated");
