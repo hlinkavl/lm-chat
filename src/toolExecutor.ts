@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 
 export interface DiffLine {
@@ -12,7 +13,32 @@ export class ToolExecutor {
     // ── Workspace boundary guard ──────────────────────────────────────────────
 
     private assertInWorkspace(absPath: string, wsRoot: string): void {
-        const rel = path.relative(wsRoot, absPath);
+        // Resolve symlinks in the workspace root
+        let realWsRoot: string;
+        try { realWsRoot = fs.realpathSync(wsRoot); } catch { realWsRoot = wsRoot; }
+
+        // Resolve symlinks in the target path.
+        // For new files that don't exist yet, walk up to the nearest existing ancestor.
+        let realPath: string;
+        try {
+            realPath = fs.realpathSync(absPath);
+        } catch {
+            let dir = path.dirname(absPath);
+            let prev = absPath;
+            realPath = absPath; // fallback if nothing resolves
+            while (dir !== prev) {
+                try {
+                    const realDir = fs.realpathSync(dir);
+                    realPath = path.join(realDir, absPath.slice(dir.length));
+                    break;
+                } catch {
+                    prev = dir;
+                    dir = path.dirname(dir);
+                }
+            }
+        }
+
+        const rel = path.relative(realWsRoot, realPath);
         if (rel.startsWith('..') || path.isAbsolute(rel)) {
             throw new Error(`Access denied: path is outside the workspace ("${absPath}").`);
         }

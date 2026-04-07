@@ -6786,12 +6786,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs3, exportName) {
+    function addFormats(ajv, list, fs4, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs3[f]);
+        ajv.addFormat(f, fs4[f]);
     }
     module2.exports = exports2 = formatsPlugin;
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -6804,7 +6804,7 @@ var require_windows = __commonJS({
   "node_modules/isexe/windows.js"(exports2, module2) {
     module2.exports = isexe;
     isexe.sync = sync;
-    var fs3 = require("fs");
+    var fs4 = require("fs");
     function checkPathExt(path5, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
@@ -6829,12 +6829,12 @@ var require_windows = __commonJS({
       return checkPathExt(path5, options);
     }
     function isexe(path5, options, cb) {
-      fs3.stat(path5, function(er, stat) {
+      fs4.stat(path5, function(er, stat) {
         cb(er, er ? false : checkStat(stat, path5, options));
       });
     }
     function sync(path5, options) {
-      return checkStat(fs3.statSync(path5), path5, options);
+      return checkStat(fs4.statSync(path5), path5, options);
     }
   }
 });
@@ -6844,14 +6844,14 @@ var require_mode = __commonJS({
   "node_modules/isexe/mode.js"(exports2, module2) {
     module2.exports = isexe;
     isexe.sync = sync;
-    var fs3 = require("fs");
+    var fs4 = require("fs");
     function isexe(path5, options, cb) {
-      fs3.stat(path5, function(er, stat) {
+      fs4.stat(path5, function(er, stat) {
         cb(er, er ? false : checkStat(stat, options));
       });
     }
     function sync(path5, options) {
-      return checkStat(fs3.statSync(path5), options);
+      return checkStat(fs4.statSync(path5), options);
     }
     function checkStat(stat, options) {
       return stat.isFile() && checkMode(stat, options);
@@ -6875,7 +6875,7 @@ var require_mode = __commonJS({
 // node_modules/isexe/index.js
 var require_isexe = __commonJS({
   "node_modules/isexe/index.js"(exports2, module2) {
-    var fs3 = require("fs");
+    var fs4 = require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
       core = require_windows();
@@ -7139,16 +7139,16 @@ var require_shebang_command = __commonJS({
 var require_readShebang = __commonJS({
   "node_modules/cross-spawn/lib/util/readShebang.js"(exports2, module2) {
     "use strict";
-    var fs3 = require("fs");
+    var fs4 = require("fs");
     var shebangCommand = require_shebang_command();
     function readShebang(command) {
       const size = 150;
       const buffer = Buffer.alloc(size);
       let fd;
       try {
-        fd = fs3.openSync(command, "r");
-        fs3.readSync(fd, buffer, 0, size, 0);
-        fs3.closeSync(fd);
+        fd = fs4.openSync(command, "r");
+        fs4.readSync(fd, buffer, 0, size, 0);
+        fs4.closeSync(fd);
       } catch (e) {
       }
       return shebangCommand(buffer.toString());
@@ -7307,7 +7307,7 @@ var vscode5 = __toESM(require("vscode"));
 
 // src/chatViewProvider.ts
 var vscode4 = __toESM(require("vscode"));
-var fs2 = __toESM(require("fs"));
+var fs3 = __toESM(require("fs"));
 var path4 = __toESM(require("path"));
 var crypto2 = __toESM(require("crypto"));
 
@@ -7589,11 +7589,36 @@ ${blocks}`;
 // src/toolExecutor.ts
 var vscode3 = __toESM(require("vscode"));
 var cp = __toESM(require("child_process"));
+var fs = __toESM(require("fs"));
 var path2 = __toESM(require("path"));
 var ToolExecutor = class _ToolExecutor {
   // ── Workspace boundary guard ──────────────────────────────────────────────
   assertInWorkspace(absPath, wsRoot) {
-    const rel = path2.relative(wsRoot, absPath);
+    let realWsRoot;
+    try {
+      realWsRoot = fs.realpathSync(wsRoot);
+    } catch {
+      realWsRoot = wsRoot;
+    }
+    let realPath;
+    try {
+      realPath = fs.realpathSync(absPath);
+    } catch {
+      let dir = path2.dirname(absPath);
+      let prev = absPath;
+      realPath = absPath;
+      while (dir !== prev) {
+        try {
+          const realDir = fs.realpathSync(dir);
+          realPath = path2.join(realDir, absPath.slice(dir.length));
+          break;
+        } catch {
+          prev = dir;
+          dir = path2.dirname(dir);
+        }
+      }
+    }
+    const rel = path2.relative(realWsRoot, realPath);
     if (rel.startsWith("..") || path2.isAbsolute(rel)) {
       throw new Error(`Access denied: path is outside the workspace ("${absPath}").`);
     }
@@ -7984,7 +8009,7 @@ function collapseContext(ops, ctx) {
 }
 
 // src/mcpManager.ts
-var fs = __toESM(require("fs"));
+var fs2 = __toESM(require("fs"));
 var path3 = __toESM(require("path"));
 
 // node_modules/zod/v3/helpers/util.js
@@ -23758,9 +23783,9 @@ var McpManager = class {
     this.configPath = path3.join(context.globalStorageUri.fsPath, "mcp.json");
   }
   async initialize() {
-    fs.mkdirSync(path3.dirname(this.configPath), { recursive: true });
+    fs2.mkdirSync(path3.dirname(this.configPath), { recursive: true });
     const legacy = this.context.globalState.get("mcpServers");
-    if (legacy && legacy.length > 0 && !fs.existsSync(this.configPath)) {
+    if (legacy && legacy.length > 0 && !fs2.existsSync(this.configPath)) {
       this.writeConfigFile(legacy);
       await this.context.globalState.update("mcpServers", void 0);
     }
@@ -23769,7 +23794,7 @@ var McpManager = class {
       this.reloadDebounce = setTimeout(() => this.reloadFromFile(), 400);
     };
     try {
-      this.fsWatcher = fs.watch(path3.dirname(this.configPath), (event, filename) => {
+      this.fsWatcher = fs2.watch(path3.dirname(this.configPath), (event, filename) => {
         if (filename === "mcp.json") {
           scheduleReload();
         }
@@ -23791,7 +23816,7 @@ var McpManager = class {
   // ── Config file I/O ───────────────────────────────────────────────────────
   readConfigFile() {
     try {
-      const raw = fs.readFileSync(this.configPath, "utf-8");
+      const raw = fs2.readFileSync(this.configPath, "utf-8");
       const parsed = JSON.parse(raw);
       if (!parsed?.mcpServers || typeof parsed.mcpServers !== "object") {
         return [];
@@ -23811,7 +23836,7 @@ var McpManager = class {
     }
   }
   writeConfigFile(configs) {
-    fs.mkdirSync(path3.dirname(this.configPath), { recursive: true });
+    fs2.mkdirSync(path3.dirname(this.configPath), { recursive: true });
     const mcpServers = {};
     for (const c of configs) {
       if (c.config.transport === "sse") {
@@ -23824,7 +23849,7 @@ var McpManager = class {
         mcpServers[c.name] = entry;
       }
     }
-    fs.writeFileSync(this.configPath, JSON.stringify({ mcpServers }, null, 2), "utf-8");
+    fs2.writeFileSync(this.configPath, JSON.stringify({ mcpServers }, null, 2), "utf-8");
   }
   getServerConfigs() {
     return this.readConfigFile();
@@ -24016,6 +24041,7 @@ var ChatViewProvider = class {
     this.context = context;
     this.conversationHistory = [];
     this.pendingTools = /* @__PURE__ */ new Map();
+    this.shellPermissions = "";
     this.mcpInstructions = {};
     this.mcpPermissions = {};
     this.toolIterations = 0;
@@ -24032,6 +24058,7 @@ var ChatViewProvider = class {
     this.workspaceMode = true;
     this.permissionMode = context.globalState.get("permissionMode", "ask");
     this.shellEnabled = context.globalState.get("shellEnabled", false);
+    this.shellPermissions = context.globalState.get("shellPermissions", "");
     this.mcpInstructions = context.globalState.get("mcpInstructions", {});
     this.mcpPermissions = context.globalState.get("mcpPermissions", {});
     const savedHistory = context.globalState.get("chatHistory", []);
@@ -24098,11 +24125,11 @@ var ChatViewProvider = class {
           break;
         case "openMcpConfig": {
           const configPath = this.mcpManager.getConfigFilePath();
-          const fs3 = await import("fs");
+          const fs4 = await import("fs");
           const path5 = await import("path");
-          fs3.mkdirSync(path5.dirname(configPath), { recursive: true });
-          if (!fs3.existsSync(configPath)) {
-            fs3.writeFileSync(configPath, "[]", "utf-8");
+          fs4.mkdirSync(path5.dirname(configPath), { recursive: true });
+          if (!fs4.existsSync(configPath)) {
+            fs4.writeFileSync(configPath, "[]", "utf-8");
           }
           const doc = await vscode4.workspace.openTextDocument(vscode4.Uri.file(configPath));
           await vscode4.window.showTextDocument(doc, { preview: false });
@@ -24118,6 +24145,11 @@ var ChatViewProvider = class {
           this.shellEnabled = !this.shellEnabled;
           await this.context.globalState.update("shellEnabled", this.shellEnabled);
           this.sendShellStatus();
+          break;
+        }
+        case "saveShellPermissions": {
+          this.shellPermissions = message.permissions ?? "";
+          await this.context.globalState.update("shellPermissions", this.shellPermissions);
           break;
         }
         case "cyclePermission": {
@@ -24231,6 +24263,36 @@ Error: ${msg}` });
               this.saveHistory();
               this.continueAfterToolResult();
             }
+          } else if (tool.type === "mcp") {
+            try {
+              const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
+              this.conversationHistory.push({ role: "user", content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
+${output}` });
+              this.saveHistory();
+              this.webviewView?.webview.postMessage({
+                type: "toolMcpResult",
+                id: message.id,
+                server: tool.server,
+                tool: tool.tool,
+                output,
+                success: true
+              });
+              this.continueAfterToolResult();
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              this.conversationHistory.push({ role: "user", content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
+Error: ${msg}` });
+              this.saveHistory();
+              this.webviewView?.webview.postMessage({
+                type: "toolMcpResult",
+                id: message.id,
+                server: tool.server,
+                tool: tool.tool,
+                output: msg,
+                success: false
+              });
+              this.continueAfterToolResult();
+            }
           }
           break;
         }
@@ -24248,7 +24310,7 @@ Error: ${msg}` });
             break;
           }
           this.pendingTools.delete(message.id);
-          const denyDesc = tool.type === "edit" ? `editing file "${tool.path}"` : tool.type === "patch" ? `patching file "${tool.path}"` : tool.type === "delete" ? `deleting file "${tool.path}"` : tool.type === "mkdir" ? `creating directory "${tool.path}"` : tool.type === "rename" ? `renaming "${tool.from}" to "${tool.to}"` : `running command: ${tool.command}`;
+          const denyDesc = tool.type === "edit" ? `editing file "${tool.path}"` : tool.type === "patch" ? `patching file "${tool.path}"` : tool.type === "delete" ? `deleting file "${tool.path}"` : tool.type === "mkdir" ? `creating directory "${tool.path}"` : tool.type === "rename" ? `renaming "${tool.from}" to "${tool.to}"` : tool.type === "mcp" ? `calling MCP tool "${tool.tool}" on server "${tool.server}"` : `running command: ${tool.command}`;
           this.webviewView?.webview.postMessage({
             type: "toolResult",
             id: message.id,
@@ -24289,7 +24351,8 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
   sendShellStatus() {
     this.webviewView?.webview.postMessage({
       type: "shellStatus",
-      enabled: this.shellEnabled
+      enabled: this.shellEnabled,
+      permissions: this.shellPermissions
     });
   }
   sendMcpStatus() {
@@ -24385,12 +24448,15 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
       const wsPath = wsFolder?.uri.fsPath ?? "(no workspace)";
       const tree = await this.contextProvider.getWorkspaceTree();
       const isWindows = process.platform === "win32";
-      const shellNote = this.shellEnabled ? `
+      let shellNote = this.shellEnabled ? `
 Shell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace \u2014 commands can read and write anywhere on the system. You may run commands with:
 <run_bash>
 command here
 </run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands \u2014 e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ""}` : `
 Shell execution is DISABLED \u2014 do not use <run_bash>, it will be blocked.`;
+      if (this.shellEnabled && this.shellPermissions.trim()) {
+        shellNote += "\n\n\u2500\u2500 Shell Permissions (HARD CONSTRAINTS \u2014 never violate) \u2500\u2500\u2500\u2500\u2500\u2500\n" + this.shellPermissions.trim().split("\n").map((l) => `  ${l}`).join("\n") + "\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500";
+      }
       prompt += `
 
 Current workspace: ${wsPath}
@@ -24913,46 +24979,57 @@ Error: ${tool.parseError}. The content inside <mcp_call> tags must be a valid JS
           didRead = true;
           continue;
         }
-        this.webviewView.webview.postMessage({
-          type: "toolMcpCall",
-          id,
-          server: tool.server,
-          tool: tool.tool
-        });
-        try {
-          const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
-          this.conversationHistory.push({
-            role: "user",
-            content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
+        if (this.permissionMode === "edit") {
+          this.webviewView.webview.postMessage({
+            type: "toolMcpCall",
+            id,
+            server: tool.server,
+            tool: tool.tool
+          });
+          try {
+            const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
+            this.conversationHistory.push({
+              role: "user",
+              content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
 ${output}`
-          });
-          this.saveHistory();
-          this.webviewView.webview.postMessage({
-            type: "toolMcpResult",
-            id,
-            server: tool.server,
-            tool: tool.tool,
-            output,
-            success: true
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          this.conversationHistory.push({
-            role: "user",
-            content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
+            });
+            this.saveHistory();
+            this.webviewView.webview.postMessage({
+              type: "toolMcpResult",
+              id,
+              server: tool.server,
+              tool: tool.tool,
+              output,
+              success: true
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.conversationHistory.push({
+              role: "user",
+              content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
 Error: ${msg}`
-          });
-          this.saveHistory();
+            });
+            this.saveHistory();
+            this.webviewView.webview.postMessage({
+              type: "toolMcpResult",
+              id,
+              server: tool.server,
+              tool: tool.tool,
+              output: msg,
+              success: false
+            });
+          }
+          didRead = true;
+        } else {
+          this.pendingTools.set(id, { type: "mcp", server: tool.server, tool: tool.tool, args: tool.args });
           this.webviewView.webview.postMessage({
-            type: "toolMcpResult",
+            type: "toolPendingMcp",
             id,
             server: tool.server,
             tool: tool.tool,
-            output: msg,
-            success: false
+            args: tool.args
           });
         }
-        didRead = true;
         continue;
       }
     }
@@ -25044,7 +25121,7 @@ Error: ${msg}`
     try {
       const nonce = crypto2.randomBytes(16).toString("hex");
       const cspSource = this.webviewView.webview.cspSource;
-      let html = fs2.readFileSync(htmlPath, "utf-8");
+      let html = fs3.readFileSync(htmlPath, "utf-8");
       html = html.replace(/\{NONCE\}/g, nonce);
       html = html.replace(/\{CSP_SOURCE\}/g, cspSource);
       return html;
@@ -25175,12 +25252,12 @@ function activate(context) {
   );
   context.subscriptions.push(
     vscode5.commands.registerCommand("lmStudioChat.openMcpConfig", async () => {
-      const fs3 = await import("fs");
+      const fs4 = await import("fs");
       const path5 = await import("path");
       const configPath = provider.mcpManager.getConfigFilePath();
-      fs3.mkdirSync(path5.dirname(configPath), { recursive: true });
-      if (!fs3.existsSync(configPath)) {
-        fs3.writeFileSync(configPath, "[]", "utf-8");
+      fs4.mkdirSync(path5.dirname(configPath), { recursive: true });
+      if (!fs4.existsSync(configPath)) {
+        fs4.writeFileSync(configPath, "[]", "utf-8");
       }
       const doc = await vscode5.workspace.openTextDocument(vscode5.Uri.file(configPath));
       await vscode5.window.showTextDocument(doc, { preview: false });

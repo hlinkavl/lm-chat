@@ -526,6 +526,35 @@
         }
         .mcp-btn-add:hover { background: rgba(78,201,176,0.2); }
 
+        /* ── Shell panel overlay ── */
+        .shell-wrap {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            display: none;
+        }
+        .shell-wrap.open {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
+        .app.shell-open .messages,
+        .app.shell-open .typing,
+        .app.shell-open .input-area { display: none !important; }
+
+        .shell-toggle-row { display: flex; align-items: center; gap: 10px; padding: 4px 0 14px; }
+        .shell-toggle-label { font-size: 11px; color: var(--fg); }
+        .btn-shell-toggle {
+            font-family: var(--font); font-size: 10px; padding: 2px 10px;
+            border-radius: 2px; cursor: pointer; border: 1px solid var(--border);
+            background: transparent; color: var(--muted); transition: all 0.15s;
+        }
+        .btn-shell-toggle.on {
+            color: #f44747; border-color: rgba(244,71,71,0.45);
+            background: rgba(244,71,71,0.06);
+        }
+
         /* ── Per-server instructions & permissions ── */
         .mcp-instr-wrap { margin-top: 6px; }
         .mcp-instr-label {
@@ -657,6 +686,30 @@
         </div>
     </div>
 
+    <!-- ── Shell config panel ── -->
+    <div class="shell-wrap" id="shellWrap">
+        <div class="mcp-header">
+            <span class="mcp-header-title">Shell configuration</span>
+            <button class="sysprompt-save" id="shellClose"
+                    style="background:transparent;border-color:var(--border);color:var(--muted)">close</button>
+        </div>
+        <div class="mcp-body">
+            <div class="shell-toggle-row">
+                <span class="shell-toggle-label">Shell execution</span>
+                <button class="btn-shell-toggle" id="shellToggleBtn">OFF</button>
+                <span style="font-size:10px;color:var(--muted)">— commands are NOT sandboxed to the workspace</span>
+            </div>
+            <div class="mcp-instr-wrap">
+                <div class="mcp-instr-label perms">Permissions</div>
+                <textarea class="mcp-instr-area perms" id="shellPermsArea" spellcheck="false"
+                    placeholder="Hard constraints — e.g. &quot;Never run rm -rf. Never modify files outside src/. No curl to external URLs.&quot;"></textarea>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:10px;line-height:1.6">
+                Permissions are injected as hard constraints in the system prompt every turn. Shell is NOT sandboxed — commands can access the entire system.
+            </div>
+        </div>
+    </div>
+
     <!-- ── Messages ── -->
     <div class="messages" id="messages">
         <div class="welcome" id="welcome">
@@ -736,6 +789,11 @@
     const sysPromptArea   = document.getElementById('sysPromptArea');
     const sysPromptSave   = document.getElementById('sysPromptSave');
     const sysPromptClose  = document.getElementById('sysPromptClose');
+    const shellWrap       = document.getElementById('shellWrap');
+    const shellClose      = document.getElementById('shellClose');
+    const shellToggleBtn  = document.getElementById('shellToggleBtn');
+    const shellPermsArea  = document.getElementById('shellPermsArea');
+    let shellPermSaveTimer = null;
     const mcpBtn          = document.getElementById('mcpBtn');
     const mcpBadge        = document.getElementById('mcpBadge');
     const mcpWrap         = document.getElementById('mcpWrap');
@@ -801,7 +859,8 @@
 
     // ── Markdown renderer ─────────────────────────────────────────────────────
     function renderMarkdown(rawText) {
-        const text = stripToolTags(rawText);
+        // Strip null bytes — prevents \x00CB sentinel injection that could produce arbitrary HTML
+        const text = stripToolTags(rawText).replace(/\x00/g, '');
         if (!text) return '';
         const blocks = [];
         let s = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -1032,6 +1091,71 @@
         return card;
     }
 
+    // Pending MCP card — shown in ask mode, has Accept/Deny buttons
+    function createPendingMcpCard(msg) {
+        const card = document.createElement('div');
+        card.className = 'tool-card';
+        card.dataset.toolId = msg.id;
+
+        const header = document.createElement('div');
+        header.className = 'tool-card-header';
+
+        const icon = document.createElement('span');
+        icon.className = 'tool-card-icon';
+        icon.style.color = '#b5cea8';
+        icon.textContent = '⚡';
+
+        const label = document.createElement('span');
+        label.className = 'bash-cmd';
+        label.style.color = '#b5cea8';
+        label.textContent = `${msg.server} / ${msg.tool}`;
+        label.title = JSON.stringify(msg.args, null, 2);
+
+        const status = document.createElement('span');
+        status.className = 'tool-status';
+
+        const actions = document.createElement('div');
+        actions.className = 'tool-card-actions';
+
+        header.appendChild(icon);
+        header.appendChild(label);
+        header.appendChild(status);
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        // Show args if non-empty
+        if (msg.args && Object.keys(msg.args).length > 0) {
+            const argsEl = document.createElement('div');
+            argsEl.className = 'tool-output';
+            argsEl.textContent = JSON.stringify(msg.args, null, 2);
+            card.appendChild(argsEl);
+        }
+
+        const runBtn = document.createElement('button');
+        runBtn.className = 'btn-run';
+        runBtn.textContent = 'Accept';
+        const denyBtn = document.createElement('button');
+        denyBtn.className = 'btn-skip';
+        denyBtn.style.cssText = 'color:var(--error);border-color:rgba(244,135,113,0.4);';
+        denyBtn.textContent = 'Deny';
+        actions.appendChild(runBtn);
+        actions.appendChild(denyBtn);
+
+        runBtn.addEventListener('click', () => {
+            runBtn.disabled = true; denyBtn.disabled = true;
+            status.textContent = 'calling…';
+            status.style.display = 'block';
+            actions.style.display = 'none';
+            vscode.postMessage({ type: 'approveTool', id: msg.id });
+        });
+        denyBtn.addEventListener('click', () => {
+            denyBtn.disabled = true; runBtn.disabled = true;
+            vscode.postMessage({ type: 'denyTool', id: msg.id, toolType: 'mcp' });
+        });
+
+        return card;
+    }
+
     function resolveMcpCard(id, success, outputText) {
         if (!/^[0-9a-f]+$/.test(id)) { return; }
         const card = messagesEl.querySelector(`[data-mcp-id="${id}"]`);
@@ -1171,11 +1295,33 @@
     urlChip.addEventListener('click',       () => vscode.postMessage({ type: 'changeEndpoint' }));
     modelChip.addEventListener('click',     () => vscode.postMessage({ type: 'selectModel' }));
     newChatBtn.addEventListener('click',    () => vscode.postMessage({ type: 'newChat' }));
-    shellChip.addEventListener('click',      () => vscode.postMessage({ type: 'toggleShell' }));
+    function openShell() {
+        closeSysPrompt();
+        closeMcp();
+        shellWrap.classList.add('open');
+        appEl.classList.add('shell-open');
+    }
+    function closeShell() {
+        shellWrap.classList.remove('open');
+        appEl.classList.remove('shell-open');
+    }
+    shellChip.addEventListener('click', () => {
+        shellWrap.classList.contains('open') ? closeShell() : openShell();
+    });
+    shellClose.addEventListener('click', closeShell);
+    shellToggleBtn.addEventListener('click', () => vscode.postMessage({ type: 'toggleShell' }));
+    shellPermsArea.addEventListener('input', () => {
+        clearTimeout(shellPermSaveTimer);
+        shellPermSaveTimer = setTimeout(() => {
+            vscode.postMessage({ type: 'saveShellPermissions', permissions: shellPermsArea.value });
+        }, 400);
+    });
     permissionChip.addEventListener('click',() => vscode.postMessage({ type: 'cyclePermission' }));
 
     const appEl = document.querySelector('.app');
     function openSysPrompt() {
+        closeShell();
+        closeMcp();
         sysPromptWrap.classList.add('open');
         sysPromptBtn.classList.add('active');
         appEl.classList.add('sysprompt-open');
@@ -1199,6 +1345,8 @@
 
     // ── MCP panel ─────────────────────────────────────────────────────────────
     function openMcp() {
+        closeShell();
+        closeSysPrompt();
         mcpWrap.classList.add('open');
         mcpBtn.classList.add('active');
         appEl.classList.add('mcp-open');
@@ -1411,10 +1559,16 @@
             }
 
             case 'shellStatus': {
-                shellChip.classList.toggle('active', msg.enabled);
-                shellChip.title = msg.enabled
-                    ? 'Shell execution ON — NOT sandboxed, commands can access the entire system — click to disable'
-                    : 'Shell execution OFF — commands are NOT sandboxed to the workspace — click to enable';
+                const on = msg.enabled;
+                shellChip.classList.toggle('active', on);
+                shellChip.title = on
+                    ? 'Shell ON — click to configure'
+                    : 'Shell OFF — click to configure';
+                shellToggleBtn.textContent = on ? 'ON' : 'OFF';
+                shellToggleBtn.classList.toggle('on', on);
+                if (msg.permissions !== undefined) {
+                    shellPermsArea.value = msg.permissions;
+                }
                 break;
             }
 
@@ -1534,8 +1688,24 @@
                 break;
             }
 
+            case 'toolPendingMcp': {
+                hideWelcome();
+                messagesEl.appendChild(createPendingMcpCard(msg));
+                scrollBottom();
+                setTimeout(scrollBottom, 50);
+                break;
+            }
+
             case 'toolMcpResult': {
-                resolveMcpCard(msg.id, msg.success, msg.output);
+                if (!/^[0-9a-f]+$/.test(msg.id)) { break; }
+                // Edit mode: auto-execute card uses data-mcp-id
+                // Ask mode: pending card uses data-tool-id — fall back to resolveToolCard
+                const hasMcpCard = messagesEl.querySelector(`[data-mcp-id="${msg.id}"]`);
+                if (hasMcpCard) {
+                    resolveMcpCard(msg.id, msg.success, msg.output);
+                } else {
+                    resolveToolCard(msg.id, msg.success ? 'applied' : 'failed', msg.output);
+                }
                 break;
             }
 

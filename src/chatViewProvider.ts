@@ -15,7 +15,8 @@ type PendingTool =
     | { type: 'bash';   command: string }
     | { type: 'delete'; path: string }
     | { type: 'mkdir';  path: string }
-    | { type: 'rename'; from: string; to: string };
+    | { type: 'rename'; from: string; to: string }
+    | { type: 'mcp';    server: string; tool: string; args: object };
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     private webviewView?: vscode.WebviewView;
@@ -30,6 +31,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private workspaceMode: boolean;
     private permissionMode: PermissionMode;
     private shellEnabled: boolean;
+    private shellPermissions: string = '';
     private mcpInstructions: Record<string, string> = {};
     private mcpPermissions:  Record<string, string> = {};
     private toolIterations: number = 0;
@@ -51,8 +53,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         this.workspaceMode   = true; // workspace context is always active
         this.permissionMode  = context.globalState.get<PermissionMode>('permissionMode', 'ask');
-        this.shellEnabled    = context.globalState.get<boolean>('shellEnabled', false);
-        this.mcpInstructions = context.globalState.get<Record<string, string>>('mcpInstructions', {});
+        this.shellEnabled     = context.globalState.get<boolean>('shellEnabled', false);
+        this.shellPermissions = context.globalState.get<string>('shellPermissions', '');
+        this.mcpInstructions  = context.globalState.get<Record<string, string>>('mcpInstructions', {});
         this.mcpPermissions  = context.globalState.get<Record<string, string>>('mcpPermissions', {});
 
         const savedHistory = context.globalState.get<ChatMessage[]>('chatHistory', []);
@@ -167,6 +170,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 }
 
+                case 'saveShellPermissions': {
+                    this.shellPermissions = message.permissions ?? '';
+                    await this.context.globalState.update('shellPermissions', this.shellPermissions);
+                    break;
+                }
+
                 case 'cyclePermission': {
                     const modes: PermissionMode[] = ['ask', 'edit'];
                     const next = modes[(modes.indexOf(this.permissionMode) + 1) % 2];
@@ -265,6 +274,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             this.saveHistory();
                             this.continueAfterToolResult();
                         }
+                    } else if (tool.type === 'mcp') {
+                        try {
+                            const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
+                            this.conversationHistory.push({ role: 'user', content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\n${output}` });
+                            this.saveHistory();
+                            this.webviewView?.webview.postMessage({
+                                type: 'toolMcpResult', id: message.id,
+                                server: tool.server, tool: tool.tool,
+                                output, success: true,
+                            });
+                            this.continueAfterToolResult();
+                        } catch (err) {
+                            const msg = err instanceof Error ? err.message : String(err);
+                            this.conversationHistory.push({ role: 'user', content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\nError: ${msg}` });
+                            this.saveHistory();
+                            this.webviewView?.webview.postMessage({
+                                type: 'toolMcpResult', id: message.id,
+                                server: tool.server, tool: tool.tool,
+                                output: msg, success: false,
+                            });
+                            this.continueAfterToolResult();
+                        }
                     }
                     break;
                 }
@@ -287,7 +318,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         : tool.type === 'delete' ? `deleting file "${tool.path}"`
                         : tool.type === 'mkdir'  ? `creating directory "${tool.path}"`
                         : tool.type === 'rename' ? `renaming "${tool.from}" to "${tool.to}"`
-                        : `running command: ${tool.command}`;
+                        : tool.type === 'mcp'    ? `calling MCP tool "${tool.tool}" on server "${tool.server}"`
+                        : `running command: ${(tool as { type: 'bash'; command: string }).command}`;
 
                     this.webviewView?.webview.postMessage({
                         type: 'toolResult', id: message.id, denied: true,
@@ -332,7 +364,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private sendShellStatus(): void {
         this.webviewView?.webview.postMessage({
             type: 'shellStatus',
-            enabled: this.shellEnabled,
+            enabled:     this.shellEnabled,
+            permissions: this.shellPermissions,
         });
     }
 
@@ -436,9 +469,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             const wsPath    = wsFolder?.uri.fsPath ?? '(no workspace)';
             const tree      = await this.contextProvider.getWorkspaceTree();
             const isWindows = process.platform === 'win32';
-            const shellNote = this.shellEnabled
+            let shellNote = this.shellEnabled
                 ? `\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. You may run commands with:\n<run_bash>\ncommand here\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
                 : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
+            if (this.shellEnabled && this.shellPermissions.trim()) {
+                shellNote += '\n\n── Shell Permissions (HARD CONSTRAINTS — never violate) ──────\n'
+                    + this.shellPermissions.trim().split('\n').map(l => `  ${l}`).join('\n')
+                    + '\n──────────────────────────────────────────────────────────────';
+            }
             prompt += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
         }
         prompt += this.mcpManager.getToolsSystemPromptBlock(this.mcpInstructions, this.mcpPermissions);
@@ -896,37 +934,47 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     didRead = true;
                     continue;
                 }
-                // Show card immediately in "calling" state
-                this.webviewView.webview.postMessage({
-                    type: 'toolMcpCall', id,
-                    server: tool.server, tool: tool.tool,
-                });
-                try {
-                    const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
-                    this.conversationHistory.push({
-                        role: 'user',
-                        content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\n${output}`,
-                    });
-                    this.saveHistory();
+                if (this.permissionMode === 'edit') {
+                    // Edit mode — auto-execute
                     this.webviewView.webview.postMessage({
-                        type: 'toolMcpResult', id,
+                        type: 'toolMcpCall', id,
                         server: tool.server, tool: tool.tool,
-                        output, success: true,
                     });
-                } catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
-                    this.conversationHistory.push({
-                        role: 'user',
-                        content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\nError: ${msg}`,
-                    });
-                    this.saveHistory();
+                    try {
+                        const output = await this.mcpManager.callTool(tool.server, tool.tool, tool.args);
+                        this.conversationHistory.push({
+                            role: 'user',
+                            content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\n${output}`,
+                        });
+                        this.saveHistory();
+                        this.webviewView.webview.postMessage({
+                            type: 'toolMcpResult', id,
+                            server: tool.server, tool: tool.tool,
+                            output, success: true,
+                        });
+                    } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        this.conversationHistory.push({
+                            role: 'user',
+                            content: `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\nError: ${msg}`,
+                        });
+                        this.saveHistory();
+                        this.webviewView.webview.postMessage({
+                            type: 'toolMcpResult', id,
+                            server: tool.server, tool: tool.tool,
+                            output: msg, success: false,
+                        });
+                    }
+                    didRead = true;
+                } else {
+                    // Ask mode — show pending card, wait for user approval
+                    this.pendingTools.set(id, { type: 'mcp', server: tool.server, tool: tool.tool, args: tool.args });
                     this.webviewView.webview.postMessage({
-                        type: 'toolMcpResult', id,
+                        type: 'toolPendingMcp', id,
                         server: tool.server, tool: tool.tool,
-                        output: msg, success: false,
+                        args: tool.args,
                     });
                 }
-                didRead = true;
                 continue;
             }
         }
