@@ -24448,14 +24448,17 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
       const wsPath = wsFolder?.uri.fsPath ?? "(no workspace)";
       const tree = await this.contextProvider.getWorkspaceTree();
       const isWindows = process.platform === "win32";
-      let shellNote = this.shellEnabled ? `
-Shell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace \u2014 commands can read and write anywhere on the system. You may run commands with:
+      const shellNote = this.shellEnabled ? `
+
+Shell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace \u2014 commands can read and write anywhere on the system. Invoke a shell command like this:
 <run_bash>
-command here
+[your shell command]
 </run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands \u2014 e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ""}` : `
+
 Shell execution is DISABLED \u2014 do not use <run_bash>, it will be blocked.`;
+      prompt += shellNote;
       if (this.shellEnabled && this.shellPermissions.trim()) {
-        shellNote += "\n\nThe user has defined additional shell permissions below. You MUST read and follow every constraint listed here before running any shell command. These are non-negotiable \u2014 treat them as the highest-priority rules for run_bash.\n\u2500\u2500 Shell Permissions (HARD CONSTRAINTS \u2014 never violate) \u2500\u2500\u2500\u2500\u2500\u2500\n" + this.shellPermissions.trim().split("\n").map((l) => `  ${l}`).join("\n") + "\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500";
+        prompt += "\n\nThe user has defined additional shell permissions below. You MUST read and follow every constraint listed here before running any shell command. These are non-negotiable \u2014 treat them as the highest-priority rules for run_bash.\n\u2500\u2500 Shell Permissions (HARD CONSTRAINTS \u2014 never violate) \u2500\u2500\u2500\u2500\u2500\u2500\n" + this.shellPermissions.trim().split("\n").map((l) => `  ${l}`).join("\n") + "\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500";
       }
       prompt += `
 
@@ -24464,7 +24467,7 @@ Current workspace: ${wsPath}
 File tree (use these exact paths in tool calls):
 ${tree}
 
-IMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist \u2014 use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
+IMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist \u2014 use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.`;
     }
     prompt += this.mcpManager.getToolsSystemPromptBlock(this.mcpInstructions, this.mcpPermissions);
     return prompt;
@@ -24530,8 +24533,9 @@ IMPORTANT: Every path shown in the tree above exists. NEVER say a file or direct
     if (!this.webviewView) {
       return;
     }
-    const hasToolTag = response.includes("<write_file") && response.includes("</write_file>") || response.includes("<run_bash>") && response.includes("</run_bash>") || response.includes("<patch_file") && response.includes("</patch_file>") || response.includes("<mcp_call") && response.includes("</mcp_call>") || response.includes("<read_file") || response.includes("<list_dir") || response.includes("<search_files") || response.includes("<delete_file") || response.includes("<create_dir") || response.includes("<rename_file");
-    const hasNativeFormat = response.includes("<tool_call") || response.includes("[TOOL_CALLS]") || response.includes("<|tool_call|>") || response.includes('"function_call"');
+    const stripped = response.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]+`/g, "");
+    const hasToolTag = stripped.includes("<write_file") && stripped.includes("</write_file>") || stripped.includes("<run_bash>") && stripped.includes("</run_bash>") || stripped.includes("<patch_file") && stripped.includes("</patch_file>") || stripped.includes("<mcp_call") && stripped.includes("</mcp_call>") || stripped.includes("<read_file") || stripped.includes("<list_dir") || stripped.includes("<search_files") || stripped.includes("<delete_file") || stripped.includes("<create_dir") || stripped.includes("<rename_file");
+    const hasNativeFormat = stripped.includes("<tool_call") || stripped.includes("[TOOL_CALLS]") || stripped.includes("<|tool_call|>") || stripped.includes('"function_call"');
     if (!hasToolTag && !hasNativeFormat) {
       return;
     }
@@ -24550,7 +24554,7 @@ Please retry your tool call using the correct format.`;
       this.continueAfterToolResult();
       return;
     }
-    const tools = parseToolCalls(response);
+    const tools = parseToolCalls(stripped);
     if (tools.length === 0) {
       this.webviewView.webview.postMessage({
         type: "systemMessage",
@@ -25148,9 +25152,14 @@ function parseToolCalls(text) {
     const replace = m[3].replace(/^\n/, "").replace(/\n$/, "");
     results.push({ type: "patch_file", path: m[1], search, replace, pos: m.index });
   }
+  const BASH_PLACEHOLDERS = /* @__PURE__ */ new Set(["[your shell command]", "command here", "[command]", "your command here"]);
   const bashRe = /<run_bash\b[^>]*>([\s\S]*?)<\/run_bash>/g;
   while ((m = bashRe.exec(text)) !== null) {
-    results.push({ type: "run_bash", command: m[1].trim(), pos: m.index });
+    const command = m[1].trim();
+    if (BASH_PLACEHOLDERS.has(command.toLowerCase())) {
+      continue;
+    }
+    results.push({ type: "run_bash", command, pos: m.index });
   }
   const readRe = /<read_file\b[^>]*\bpath=["']([^"']+)["'][^>]*(?:\/>|>\s*<\/read_file>)/g;
   while ((m = readRe.exec(text)) !== null) {

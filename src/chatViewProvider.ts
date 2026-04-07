@@ -469,16 +469,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             const wsPath    = wsFolder?.uri.fsPath ?? '(no workspace)';
             const tree      = await this.contextProvider.getWorkspaceTree();
             const isWindows = process.platform === 'win32';
-            let shellNote = this.shellEnabled
-                ? `\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. You may run commands with:\n<run_bash>\ncommand here\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
-                : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
+
+            // Shell status note — injected BEFORE the file tree so it isn't buried
+            const shellNote = this.shellEnabled
+                ? `\n\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. Invoke a shell command like this:\n<run_bash>\n[your shell command]\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
+                : `\n\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
+            prompt += shellNote;
+
+            // User-defined shell permissions — injected immediately after the shell note,
+            // before the file tree, so weaker models see them while context is fresh
             if (this.shellEnabled && this.shellPermissions.trim()) {
-                shellNote += '\n\nThe user has defined additional shell permissions below. You MUST read and follow every constraint listed here before running any shell command. These are non-negotiable — treat them as the highest-priority rules for run_bash.\n'
+                prompt += '\n\nThe user has defined additional shell permissions below. You MUST read and follow every constraint listed here before running any shell command. These are non-negotiable — treat them as the highest-priority rules for run_bash.\n'
                     + '── Shell Permissions (HARD CONSTRAINTS — never violate) ──────\n'
                     + this.shellPermissions.trim().split('\n').map(l => `  ${l}`).join('\n')
                     + '\n──────────────────────────────────────────────────────────────';
             }
-            prompt += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
+
+            // Workspace context (file tree) follows shell settings
+            prompt += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.`;
         }
         prompt += this.mcpManager.getToolsSystemPromptBlock(this.mcpInstructions, this.mcpPermissions);
         return prompt;
@@ -549,21 +557,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async _processToolCallsInner(response: string): Promise<void> {
         if (!this.webviewView) { return; }
 
+        // Strip markdown code blocks (fenced and inline) before checking for tool tags.
+        // This prevents the parser from acting on tag examples the model quotes in its
+        // explanatory text (e.g. when asked to list the rules it follows).
+        const stripped = response
+            .replace(/```[\s\S]*?```/g, '')   // fenced code blocks
+            .replace(/`[^`\n]+`/g, '');       // inline code spans
+
         // Quick pre-check before running the regex.
         // For tags that require a closing element, require BOTH opening and closing to be present —
         // this prevents false positives when the model merely *mentions* a tag name in text.
         const hasToolTag =
-            (response.includes('<write_file')   && response.includes('</write_file>'))   ||
-            (response.includes('<run_bash>')     && response.includes('</run_bash>'))     ||
-            (response.includes('<patch_file')    && response.includes('</patch_file>'))   ||
-            (response.includes('<mcp_call')      && response.includes('</mcp_call>'))     ||
-            response.includes('<read_file')   || response.includes('<list_dir')   ||
-            response.includes('<search_files') || response.includes('<delete_file') ||
-            response.includes('<create_dir')  || response.includes('<rename_file');
+            (stripped.includes('<write_file')   && stripped.includes('</write_file>'))   ||
+            (stripped.includes('<run_bash>')     && stripped.includes('</run_bash>'))     ||
+            (stripped.includes('<patch_file')    && stripped.includes('</patch_file>'))   ||
+            (stripped.includes('<mcp_call')      && stripped.includes('</mcp_call>'))     ||
+            stripped.includes('<read_file')   || stripped.includes('<list_dir')   ||
+            stripped.includes('<search_files') || stripped.includes('<delete_file') ||
+            stripped.includes('<create_dir')  || stripped.includes('<rename_file');
 
         // Detect native model tool-call formats (wrong format — model ignoring instructions)
-        const hasNativeFormat = response.includes('<tool_call') || response.includes('[TOOL_CALLS]') ||
-                                response.includes('<|tool_call|>') || response.includes('"function_call"');
+        const hasNativeFormat = stripped.includes('<tool_call') || stripped.includes('[TOOL_CALLS]') ||
+                                stripped.includes('<|tool_call|>') || stripped.includes('"function_call"');
 
         if (!hasToolTag && !hasNativeFormat) { return; }
 
@@ -580,7 +595,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const tools = parseToolCalls(response);
+        // Parse from the stripped text so code-block examples are never executed
+        const tools = parseToolCalls(stripped);
 
         if (tools.length === 0) {
             // Tags were present but regex didn't match
@@ -1128,10 +1144,13 @@ function parseToolCalls(text: string): ToolCall[] {
         results.push({ type: 'patch_file', path: m[1], search, replace, pos: m.index });
     }
 
-    // run_bash
+    // run_bash — skip obvious placeholder content from system prompt examples
+    const BASH_PLACEHOLDERS = new Set(['[your shell command]', 'command here', '[command]', 'your command here']);
     const bashRe = /<run_bash\b[^>]*>([\s\S]*?)<\/run_bash>/g;
     while ((m = bashRe.exec(text)) !== null) {
-        results.push({ type: 'run_bash', command: m[1].trim(), pos: m.index });
+        const command = m[1].trim();
+        if (BASH_PLACEHOLDERS.has(command.toLowerCase())) { continue; }
+        results.push({ type: 'run_bash', command, pos: m.index });
     }
 
     // read_file — self-closing or empty element
