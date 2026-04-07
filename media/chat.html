@@ -502,7 +502,7 @@
 
         .mcp-server-row {
             display: flex; align-items: flex-start; gap: 8px;
-            padding: 8px 0; border-bottom: 1px solid var(--border);
+            padding: 14px 0; border-bottom: 1px solid var(--border);
         }
         .mcp-dot {
             width: 7px; height: 7px; border-radius: 50%;
@@ -556,10 +556,10 @@
         }
 
         /* ── Per-server instructions & permissions ── */
-        .mcp-instr-wrap { margin-top: 6px; }
+        .mcp-instr-wrap { margin-top: 12px; }
         .mcp-instr-label {
             font-size: 9px; color: #8a8a8a; text-transform: uppercase;
-            letter-spacing: 0.05em; margin-bottom: 3px;
+            letter-spacing: 0.05em; margin-bottom: 4px;
         }
         .mcp-instr-label.perms { color: #c8a84b; }
         .mcp-instr-area {
@@ -650,7 +650,7 @@
             </div>
             <div style="display:flex;gap:6px;align-items:center">
                 <button class="sysprompt-save" id="sysPromptSave">save &amp; close</button>
-                <button class="sysprompt-save" id="sysPromptClose" style="background:transparent;border-color:var(--border);color:var(--muted)">cancel</button>
+                <button class="sysprompt-save" id="sysPromptClose">cancel</button>
             </div>
         </div>
         <textarea id="sysPromptArea" spellcheck="false"></textarea>
@@ -660,8 +660,7 @@
     <div class="mcp-wrap" id="mcpWrap">
         <div class="mcp-header">
             <span class="mcp-header-title">MCP servers</span>
-            <button class="sysprompt-save" id="mcpClose"
-                    style="background:transparent;border-color:var(--border);color:var(--muted)">close</button>
+            <button class="sysprompt-save" id="mcpClose">close</button>
         </div>
         <div class="mcp-body" id="mcpBody">
             <div id="mcpServerList"></div>
@@ -690,8 +689,7 @@
     <div class="shell-wrap" id="shellWrap">
         <div class="mcp-header">
             <span class="mcp-header-title">Shell configuration</span>
-            <button class="sysprompt-save" id="shellClose"
-                    style="background:transparent;border-color:var(--border);color:var(--muted)">close</button>
+            <button class="sysprompt-save" id="shellClose">close</button>
         </div>
         <div class="mcp-body">
             <div class="shell-toggle-row">

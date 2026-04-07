@@ -473,7 +473,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 ? `\nShell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace — commands can read and write anywhere on the system. You may run commands with:\n<run_bash>\ncommand here\n</run_bash>${isWindows ? '\nIMPORTANT: The shell runs on Windows (cmd.exe). Use Windows commands — e.g. "cmd /c del file.txt" instead of "rm", "cmd /c rmdir /s /q dir" instead of "rm -rf", "cmd /c copy src dest" instead of "cp". Do NOT use Unix/bash commands.' : ''}`
                 : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
             if (this.shellEnabled && this.shellPermissions.trim()) {
-                shellNote += '\n\n── Shell Permissions (HARD CONSTRAINTS — never violate) ──────\n'
+                shellNote += '\n\nIMPORTANT: Before running ANY shell command, you MUST read and strictly follow the shell permissions below. These constraints OVERRIDE any previous instructions about running commands freely — even if the system prompt says you may run anything.\n'
+                    + '── Shell Permissions (HARD CONSTRAINTS — never violate) ──────\n'
                     + this.shellPermissions.trim().split('\n').map(l => `  ${l}`).join('\n')
                     + '\n──────────────────────────────────────────────────────────────';
             }
