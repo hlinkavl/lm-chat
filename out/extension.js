@@ -24458,7 +24458,9 @@ Shell execution is ENABLED. WARNING: run_bash is NOT sandboxed to the workspace 
 Shell execution is DISABLED \u2014 do not use <run_bash>, it will be blocked.`;
       prompt += shellNote;
       if (this.shellEnabled && this.shellPermissions.trim()) {
-        prompt += "\n\nThe user has defined additional shell permissions below. You MUST read and follow every constraint listed here before running any shell command. These are non-negotiable \u2014 treat them as the highest-priority rules for run_bash.\n\u2500\u2500 Shell Permissions (HARD CONSTRAINTS \u2014 never violate) \u2500\u2500\u2500\u2500\u2500\u2500\n" + this.shellPermissions.trim().split("\n").map((l) => `  ${l}`).join("\n") + "\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500";
+        const rules = this.shellPermissions.trim().split("\n");
+        const numbered = rules.map((l, i) => `  ${i + 1}. ${l.replace(/^\d+[\.\)]\s*/, "")}`).join("\n");
+        prompt += "\n\n=== SHELL PERMISSIONS (HARD CONSTRAINTS -- never violate) ===\nThe user has defined the following shell permission rules.\nYou MUST read and follow EVERY rule below before running any shell command.\nThese are non-negotiable -- treat them as the highest-priority rules for run_bash.\nRules:\n" + numbered + "\n=== END SHELL PERMISSIONS ===";
       }
       prompt += `
 

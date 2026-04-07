@@ -479,10 +479,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // User-defined shell permissions — injected immediately after the shell note,
             // before the file tree, so weaker models see them while context is fresh
             if (this.shellEnabled && this.shellPermissions.trim()) {
-                prompt += '\n\nThe user has defined additional shell permissions below. You MUST read and follow every constraint listed here before running any shell command. These are non-negotiable — treat them as the highest-priority rules for run_bash.\n'
-                    + '── Shell Permissions (HARD CONSTRAINTS — never violate) ──────\n'
-                    + this.shellPermissions.trim().split('\n').map(l => `  ${l}`).join('\n')
-                    + '\n──────────────────────────────────────────────────────────────';
+                const rules = this.shellPermissions.trim().split('\n');
+                const numbered = rules.map((l, i) => `  ${i + 1}. ${l.replace(/^\d+[\.\)]\s*/, '')}`).join('\n');
+                prompt += '\n\n'
+                    + '=== SHELL PERMISSIONS (HARD CONSTRAINTS -- never violate) ===\n'
+                    + 'The user has defined the following shell permission rules.\n'
+                    + 'You MUST read and follow EVERY rule below before running any shell command.\n'
+                    + 'These are non-negotiable -- treat them as the highest-priority rules for run_bash.\n'
+                    + 'Rules:\n'
+                    + numbered + '\n'
+                    + '=== END SHELL PERMISSIONS ===';
             }
 
             // Workspace context (file tree) follows shell settings
