@@ -23782,8 +23782,8 @@ var McpManager = class {
   dispose() {
     clearTimeout(this.reloadDebounce);
     this.fsWatcher?.close();
-    for (const [, client] of this.clients) {
-      client.close().catch(() => {
+    for (const [, client2] of this.clients) {
+      client2.close().catch(() => {
       });
     }
     this.clients.clear();
@@ -23878,18 +23878,18 @@ var McpManager = class {
       } else {
         transport = new SSEClientTransport(new URL(cfg.config.url));
       }
-      const client = new Client(
+      const client2 = new Client(
         { name: "lm-studio-chat", version: "1.0.0" },
         { capabilities: {} }
       );
       await Promise.race([
-        client.connect(transport),
+        client2.connect(transport),
         new Promise(
           (_, reject) => setTimeout(() => reject(new Error("Connection timeout after 10s")), 1e4)
         )
       ]);
-      const toolsResult = await client.listTools();
-      this.clients.set(cfg.name, client);
+      const toolsResult = await client2.listTools();
+      this.clients.set(cfg.name, client2);
       this.states.set(cfg.name, {
         config: cfg,
         status: "connected",
@@ -23900,6 +23900,8 @@ var McpManager = class {
         }))
       });
     } catch (err) {
+      client.close().catch(() => {
+      });
       const message = err instanceof Error ? err.message : String(err);
       this.states.set(cfg.name, {
         config: cfg,
@@ -23911,9 +23913,9 @@ var McpManager = class {
     this.notifyChange();
   }
   async disconnectServer(name) {
-    const client = this.clients.get(name);
-    if (client) {
-      client.close().catch(() => {
+    const client2 = this.clients.get(name);
+    if (client2) {
+      client2.close().catch(() => {
       });
       this.clients.delete(name);
     }
@@ -23995,11 +23997,11 @@ var McpManager = class {
     return lines.join("\n");
   }
   async callTool(serverName, toolName, args) {
-    const client = this.clients.get(serverName);
-    if (!client) {
+    const client2 = this.clients.get(serverName);
+    if (!client2) {
       throw new Error(`MCP server "${serverName}" is not connected`);
     }
-    const result = await client.callTool({
+    const result = await client2.callTool({
       name: toolName,
       arguments: args
     });
@@ -24114,7 +24116,7 @@ var ChatViewProvider = class {
           break;
         case "toggleShell": {
           this.shellEnabled = !this.shellEnabled;
-          this.context.globalState.update("shellEnabled", this.shellEnabled);
+          await this.context.globalState.update("shellEnabled", this.shellEnabled);
           this.sendShellStatus();
           break;
         }
@@ -24122,7 +24124,7 @@ var ChatViewProvider = class {
           const modes = ["ask", "edit"];
           const next = modes[(modes.indexOf(this.permissionMode) + 1) % 2];
           this.permissionMode = next;
-          this.context.globalState.update("permissionMode", this.permissionMode);
+          await this.context.globalState.update("permissionMode", this.permissionMode);
           this.sendPermissionStatus();
           break;
         }
@@ -24902,6 +24904,15 @@ Error: ${msg}`
         }
       }
       if (tool.type === "mcp_call") {
+        if (tool.parseError) {
+          const errMsg = `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]
+Error: ${tool.parseError}. The content inside <mcp_call> tags must be a valid JSON object.`;
+          this.conversationHistory.push({ role: "user", content: errMsg });
+          this.saveHistory();
+          this.webviewView.webview.postMessage({ type: "systemMessage", text: `mcp_call JSON error: ${tool.parseError}` });
+          didRead = true;
+          continue;
+        }
         this.webviewView.webview.postMessage({
           type: "toolMcpCall",
           id,
@@ -25098,12 +25109,14 @@ function parseToolCalls(text) {
       continue;
     }
     let args = {};
+    let parseError;
+    const rawArgs = m[2].trim();
     try {
-      args = JSON.parse(m[2].trim());
+      args = JSON.parse(rawArgs);
     } catch {
-      args = {};
+      parseError = `Invalid JSON arguments: ${rawArgs.slice(0, 120)}`;
     }
-    results.push({ type: "mcp_call", server: serverMatch[1], tool: toolMatch[1], args, pos: m.index });
+    results.push({ type: "mcp_call", server: serverMatch[1], tool: toolMatch[1], args, parseError, pos: m.index });
   }
   return results.sort((a, b) => a.pos - b.pos);
 }

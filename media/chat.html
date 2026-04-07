@@ -154,7 +154,16 @@
 
         /* Welcome */
         .welcome { color: var(--muted); font-size: 12px; padding: 12px 0; }
-        .welcome-title { color: var(--prompt); margin-bottom: 6px; }
+        .welcome-title { color: var(--prompt); margin-bottom: 8px; }
+        .welcome-intro { color: var(--muted); font-size: 11px; line-height: 1.7; }
+        .welcome-divider { height: 1px; background: var(--border); margin: 10px 0; }
+        .welcome-section { display: flex; gap: 10px; align-items: flex-start; }
+        .welcome-section-label {
+            font-size: 9px; color: #8a8a8a; text-transform: uppercase;
+            letter-spacing: 0.05em; flex-shrink: 0; padding-top: 2px; min-width: 32px;
+        }
+        .welcome-section-body { color: var(--muted); font-size: 11px; line-height: 1.7; flex: 1; }
+        .welcome-section-body > div { margin-bottom: 1px; }
 
         /* Message rows */
         .msg { padding: 6px 0; }
@@ -392,17 +401,17 @@
 
         /* ── Prompt editor button ── */
         .btn-sysprompt {
-            color: rgba(197,134,192,0.55);
-            border-color: rgba(197,134,192,0.2);
+            color: #c586c0;
+            border-color: rgba(197,134,192,0.35);
         }
         .btn-sysprompt:hover {
-            color: #c586c0;
-            border-color: rgba(197,134,192,0.45);
+            color: #d49ed0;
+            border-color: rgba(197,134,192,0.55);
             background: rgba(197,134,192,0.06);
         }
         .btn-sysprompt.active {
-            color: #c586c0; border-color: rgba(197,134,192,0.4);
-            background: rgba(197,134,192,0.08);
+            color: #d49ed0; border-color: rgba(197,134,192,0.55);
+            background: rgba(197,134,192,0.1);
         }
 
         /* ── Topbar groups ── */
@@ -454,9 +463,9 @@
         .mcp-call-output.err { color: var(--error); }
 
         /* ── MCP button ── */
-        .btn-mcp { color: rgba(181,206,168,0.55); border-color: rgba(181,206,168,0.2); }
-        .btn-mcp:hover { color: #b5cea8; border-color: rgba(181,206,168,0.4); background: rgba(181,206,168,0.06); }
-        .btn-mcp.active { color: #b5cea8; border-color: rgba(181,206,168,0.4); background: rgba(181,206,168,0.08); }
+        .btn-mcp { color: #b5cea8; border-color: rgba(181,206,168,0.35); }
+        .btn-mcp:hover { color: #c8dfc0; border-color: rgba(181,206,168,0.55); background: rgba(181,206,168,0.06); }
+        .btn-mcp.active { color: #c8dfc0; border-color: rgba(181,206,168,0.55); background: rgba(181,206,168,0.1); }
         .mcp-badge {
             font-size: 9px; color: var(--prompt);
             background: rgba(78,201,176,0.18); border-radius: 8px;
@@ -652,14 +661,27 @@
     <div class="messages" id="messages">
         <div class="welcome" id="welcome">
             <div class="welcome-title">~ lm-studio-chat</div>
-            <div style="margin-bottom:6px">An agentic coding assistant that connects VS Code to your local <strong style="color:var(--prompt)">LM Studio</strong> instance. The model has full read/write access to your workspace and can read files, propose edits, run shell commands, and call external tools via MCP — all without leaving the editor.</div>
-            <div style="color:var(--muted);font-size:11px;line-height:1.7">
-                <span style="color:var(--ai)">ask</span> — every file write or command requires your <strong>Accept</strong> or <strong>Deny</strong>. Denied actions are remembered for the session.<br>
-                <span style="color:var(--user)">edit</span> — changes are applied immediately with a diff shown afterwards.<br>
-                <span style="color:#c586c0">prompt</span> — edit the system prompt sent to the model; workspace context and MCP tools are appended automatically.
+            <div class="welcome-intro">An agentic coding assistant that connects VS Code to your local <strong style="color:var(--prompt)">LM Studio</strong> instance. The model has full read/write access to your workspace and can read files, propose edits, run shell commands, and call external tools via MCP — all without leaving the editor.</div>
+
+            <div class="welcome-divider"></div>
+
+            <div class="welcome-section">
+                <span class="welcome-section-label">perms</span>
+                <div class="welcome-section-body">
+                    <div><span style="color:var(--ai)">ask</span> — every file write or command requires your <strong>Accept</strong> or <strong>Deny</strong>. Denied actions are remembered for the session.</div>
+                    <div><span style="color:var(--user)">edit</span> — changes are applied immediately; a diff is shown afterwards.</div>
+                    <div><span style="color:#c586c0">prompt</span> — edit the system prompt; workspace tree and MCP tools are appended automatically.</div>
+                </div>
             </div>
-            <div style="color:var(--muted);font-size:11px;line-height:1.7;margin-top:8px">
-                <span style="color:#f44747">shell</span> &amp; <span style="color:#b5cea8">mcp</span> — enable terminal access or connect MCP servers (databases, APIs) the model can call as tools.
+
+            <div class="welcome-divider"></div>
+
+            <div class="welcome-section">
+                <span class="welcome-section-label">tools</span>
+                <div class="welcome-section-body">
+                    <div><span style="color:#f44747">shell</span> — enable terminal access. Commands are NOT sandboxed to the workspace.</div>
+                    <div><span style="color:#b5cea8">mcp</span> — connect MCP servers (databases, APIs, services). Per-server context and permissions can be configured.</div>
+                </div>
             </div>
         </div>
     </div>
@@ -1011,6 +1033,7 @@
     }
 
     function resolveMcpCard(id, success, outputText) {
+        if (!/^[0-9a-f]+$/.test(id)) { return; }
         const card = messagesEl.querySelector(`[data-mcp-id="${id}"]`);
         if (!card) { return; }
         const status = card.querySelector('.mcp-call-status');
@@ -1026,6 +1049,7 @@
     }
 
     function resolveToolCard(id, state, output, denyReason) {
+        if (!/^[0-9a-f]+$/.test(id)) { return; }
         const card = messagesEl.querySelector(`[data-tool-id="${id}"]`);
         if (!card) { return; }
         card.classList.add('resolved', state);

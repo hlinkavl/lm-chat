@@ -221,6 +221,8 @@ export class McpManager {
                 })),
             });
         } catch (err) {
+            // Clean up transport that may still be pending a connection
+            client.close().catch(() => {/* best-effort */});
             const message = err instanceof Error ? err.message : String(err);
             this.states.set(cfg.name, {
                 config: cfg, status: 'error', errorMessage: message, tools: [],

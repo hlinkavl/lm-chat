@@ -162,7 +162,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'toggleShell': {
                     this.shellEnabled = !this.shellEnabled;
-                    this.context.globalState.update('shellEnabled', this.shellEnabled);
+                    await this.context.globalState.update('shellEnabled', this.shellEnabled);
                     this.sendShellStatus();
                     break;
                 }
@@ -171,7 +171,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     const modes: PermissionMode[] = ['ask', 'edit'];
                     const next = modes[(modes.indexOf(this.permissionMode) + 1) % 2];
                     this.permissionMode = next;
-                    this.context.globalState.update('permissionMode', this.permissionMode);
+                    await this.context.globalState.update('permissionMode', this.permissionMode);
                     this.sendPermissionStatus();
                     break;
                 }
@@ -888,6 +888,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             // ── mcp_call ─────────────────────────────────────────────────────
             if (tool.type === 'mcp_call') {
+                if (tool.parseError) {
+                    const errMsg = `[Tool result: mcp_call server="${tool.server}" tool="${tool.tool}"]\nError: ${tool.parseError}. The content inside <mcp_call> tags must be a valid JSON object.`;
+                    this.conversationHistory.push({ role: 'user', content: errMsg });
+                    this.saveHistory();
+                    this.webviewView.webview.postMessage({ type: 'systemMessage', text: `mcp_call JSON error: ${tool.parseError}` });
+                    didRead = true;
+                    continue;
+                }
                 // Show card immediately in "calling" state
                 this.webviewView.webview.postMessage({
                     type: 'toolMcpCall', id,
@@ -1043,7 +1051,7 @@ type ToolCall =
     | { type: 'delete_file';  path: string;                                    pos: number }
     | { type: 'create_dir';   path: string;                                    pos: number }
     | { type: 'rename_file';  from: string; to: string;                        pos: number }
-    | { type: 'mcp_call';     server: string; tool: string; args: object;      pos: number };
+    | { type: 'mcp_call';     server: string; tool: string; args: object; parseError?: string; pos: number };
 
 function parseToolCalls(text: string): ToolCall[] {
     const results: ToolCall[] = [];
@@ -1117,8 +1125,12 @@ function parseToolCalls(text: string): ToolCall[] {
         const toolMatch   = attrs.match(/\btool=["']([^"']+)["']/);
         if (!serverMatch || !toolMatch) { continue; }
         let args: object = {};
-        try { args = JSON.parse(m[2].trim()); } catch { args = {}; }
-        results.push({ type: 'mcp_call', server: serverMatch[1], tool: toolMatch[1], args, pos: m.index });
+        let parseError: string | undefined;
+        const rawArgs = m[2].trim();
+        try { args = JSON.parse(rawArgs); } catch {
+            parseError = `Invalid JSON arguments: ${rawArgs.slice(0, 120)}`;
+        }
+        results.push({ type: 'mcp_call', server: serverMatch[1], tool: toolMatch[1], args, parseError, pos: m.index });
     }
 
     return results.sort((a, b) => a.pos - b.pos);
