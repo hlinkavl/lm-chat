@@ -392,17 +392,17 @@
 
         /* ── Prompt editor button ── */
         .btn-sysprompt {
-            color: rgba(156,220,254,0.55);
-            border-color: rgba(156,220,254,0.2);
+            color: rgba(197,134,192,0.55);
+            border-color: rgba(197,134,192,0.2);
         }
         .btn-sysprompt:hover {
-            color: var(--ai);
-            border-color: rgba(156,220,254,0.45);
-            background: rgba(156,220,254,0.06);
+            color: #c586c0;
+            border-color: rgba(197,134,192,0.45);
+            background: rgba(197,134,192,0.06);
         }
         .btn-sysprompt.active {
-            color: var(--ai); border-color: rgba(156,220,254,0.4);
-            background: rgba(156,220,254,0.08);
+            color: #c586c0; border-color: rgba(197,134,192,0.4);
+            background: rgba(197,134,192,0.08);
         }
 
         /* ── Topbar groups ── */
@@ -508,7 +508,7 @@
         .mcp-server-meta { font-size: 10px; color: var(--muted); margin-top: 1px; }
         .mcp-server-tools { font-size: 10px; color: var(--prompt); margin-top: 2px; }
         .mcp-server-error { font-size: 10px; color: var(--error); margin-top: 2px; word-break: break-all; }
-.mcp-add-section { padding: 10px 0; }
+        .mcp-add-section { padding: 10px 0; }
         .mcp-add-title { font-size: 10px; color: var(--muted); margin-bottom: 8px; }
         .mcp-btn-add {
             font-family: var(--font); font-size: 10px;
@@ -516,6 +516,22 @@
             color: var(--prompt); border-radius: 2px; padding: 3px 12px; cursor: pointer;
         }
         .mcp-btn-add:hover { background: rgba(78,201,176,0.2); }
+
+        /* ── Per-server instructions ── */
+        .mcp-instr-wrap { margin-top: 6px; }
+        .mcp-instr-label {
+            font-size: 9px; color: #8a8a8a; text-transform: uppercase;
+            letter-spacing: 0.05em; margin-bottom: 3px;
+        }
+        .mcp-instr-area {
+            width: 100%; box-sizing: border-box;
+            background: #1a1a1a; border: 1px solid var(--border); border-radius: 3px;
+            font-family: var(--font); font-size: 11px; color: var(--fg);
+            padding: 5px 8px; resize: vertical; min-height: 44px; max-height: 120px;
+            line-height: 1.5; outline: none;
+        }
+        .mcp-instr-area::placeholder { color: var(--subtle); }
+        .mcp-instr-area:focus { border-color: rgba(181,206,168,0.4); }
     </style>
 </head>
 <body>
@@ -638,7 +654,7 @@
             <div style="color:var(--muted);font-size:11px;line-height:1.7">
                 <span style="color:var(--ai)">ask</span> — every file write or command requires your <strong>Accept</strong> or <strong>Deny</strong>. Denied actions are remembered for the session.<br>
                 <span style="color:var(--user)">edit</span> — changes are applied immediately with a diff shown afterwards.<br>
-                <span style="color:var(--ai)">prompt</span> — edit the system prompt sent to the model; workspace context and MCP tools are appended automatically.
+                <span style="color:#c586c0">prompt</span> — edit the system prompt sent to the model; workspace context and MCP tools are appended automatically.
             </div>
             <div style="color:var(--muted);font-size:11px;line-height:1.7;margin-top:8px">
                 <span style="color:#f44747">shell</span> &amp; <span style="color:#b5cea8">mcp</span> — enable terminal access or connect MCP servers (databases, APIs) the model can call as tools.
@@ -703,6 +719,8 @@
     const mcpServerList   = document.getElementById('mcpServerList');
     const mcpEditConfigBtn = document.getElementById('mcpEditConfigBtn');
     let mcpConfigs        = [];
+    let mcpInstructions   = {};
+    let mcpSaveTimer      = null;
     let isStreaming       = false;
     let currentBodyEl     = null;
     let currentRawText    = '';
@@ -1171,26 +1189,91 @@
         vscode.postMessage({ type: 'openMcpConfig' });
     });
 
+    function scheduleSaveMcpInstructions() {
+        clearTimeout(mcpSaveTimer);
+        mcpSaveTimer = setTimeout(() => {
+            vscode.postMessage({ type: 'saveMcpInstructions', instructions: mcpInstructions });
+        }, 400);
+    }
+
     function renderMcpServers(servers) {
+        mcpServerList.innerHTML = '';
         if (!servers || servers.length === 0) {
-            mcpServerList.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:6px 0 12px">No servers in mcp.json yet. Click "open mcp.json" below to add one.</div>';
+            const empty = document.createElement('div');
+            empty.style.cssText = 'font-size:11px;color:var(--muted);padding:6px 0 12px';
+            empty.textContent = 'No servers in mcp.json yet. Click "open mcp.json" below to add one.';
+            mcpServerList.appendChild(empty);
             return;
         }
-        mcpServerList.innerHTML = servers.map(s => `
-            <div class="mcp-server-row">
-                <div class="mcp-dot ${s.status}"></div>
-                <div class="mcp-server-info">
-                    <div class="mcp-server-name">${escapeHtml(s.name)}</div>
-                    <div class="mcp-server-meta">${escapeHtml(s.transport)} · ${s.status}</div>
-                    ${s.status === 'connected' && s.toolCount > 0
-                        ? `<div class="mcp-server-tools">${s.toolCount} tool${s.toolCount !== 1 ? 's' : ''} available</div>`
-                        : ''}
-                    ${s.errorMessage
-                        ? `<div class="mcp-server-error">${escapeHtml(s.errorMessage)}</div>`
-                        : ''}
-                </div>
-            </div>
-        `).join('');
+        for (const s of servers) {
+            const row = document.createElement('div');
+            row.className = 'mcp-server-row';
+            row.style.flexDirection = 'column';
+            row.style.alignItems = 'stretch';
+
+            // Server status line
+            const topLine = document.createElement('div');
+            topLine.style.cssText = 'display:flex;align-items:flex-start;gap:8px';
+
+            const dot = document.createElement('div');
+            dot.className = `mcp-dot ${s.status}`;
+            dot.style.marginTop = '4px';
+
+            const info = document.createElement('div');
+            info.className = 'mcp-server-info';
+
+            const name = document.createElement('div');
+            name.className = 'mcp-server-name';
+            name.textContent = s.name;
+
+            const meta = document.createElement('div');
+            meta.className = 'mcp-server-meta';
+            meta.textContent = `${s.transport} · ${s.status}`;
+
+            info.appendChild(name);
+            info.appendChild(meta);
+
+            if (s.status === 'connected' && s.toolCount > 0) {
+                const tools = document.createElement('div');
+                tools.className = 'mcp-server-tools';
+                tools.textContent = `${s.toolCount} tool${s.toolCount !== 1 ? 's' : ''} available`;
+                info.appendChild(tools);
+            }
+            if (s.errorMessage) {
+                const err = document.createElement('div');
+                err.className = 'mcp-server-error';
+                err.textContent = s.errorMessage;
+                info.appendChild(err);
+            }
+
+            topLine.appendChild(dot);
+            topLine.appendChild(info);
+            row.appendChild(topLine);
+
+            // Per-server instructions
+            const instrWrap = document.createElement('div');
+            instrWrap.className = 'mcp-instr-wrap';
+
+            const instrLabel = document.createElement('div');
+            instrLabel.className = 'mcp-instr-label';
+            instrLabel.textContent = 'AI instructions';
+
+            const instrArea = document.createElement('textarea');
+            instrArea.className = 'mcp-instr-area';
+            instrArea.placeholder = 'Custom context for the AI — e.g. "PostgreSQL database on localhost, schema: public. Always list tables before querying."';
+            instrArea.value = mcpInstructions[s.name] || '';
+            instrArea.spellcheck = false;
+            instrArea.addEventListener('input', () => {
+                mcpInstructions[s.name] = instrArea.value;
+                scheduleSaveMcpInstructions();
+            });
+
+            instrWrap.appendChild(instrLabel);
+            instrWrap.appendChild(instrArea);
+            row.appendChild(instrWrap);
+
+            mcpServerList.appendChild(row);
+        }
     }
 
     // ── Messages from extension ───────────────────────────────────────────────
@@ -1372,6 +1455,7 @@
 
             case 'mcpStatus': {
                 mcpConfigs = msg.configs || [];
+                mcpInstructions = msg.instructions || {};
                 renderMcpServers(msg.servers || []);
                 const connectedCount = (msg.servers || []).filter(s => s.status === 'connected').length;
                 if (connectedCount > 0) {

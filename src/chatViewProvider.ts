@@ -30,6 +30,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private workspaceMode: boolean;
     private permissionMode: PermissionMode;
     private shellEnabled: boolean;
+    private mcpInstructions: Record<string, string> = {};
     private toolIterations: number = 0;
     private isProcessingTools: boolean = false;
     private currentModel: string = '';
@@ -50,6 +51,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.workspaceMode   = true; // workspace context is always active
         this.permissionMode  = context.globalState.get<PermissionMode>('permissionMode', 'ask');
         this.shellEnabled    = context.globalState.get<boolean>('shellEnabled', false);
+        this.mcpInstructions = context.globalState.get<Record<string, string>>('mcpInstructions', {});
 
         const savedHistory = context.globalState.get<ChatMessage[]>('chatHistory', []);
         this.conversationHistory = savedHistory;
@@ -121,6 +123,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'saveMcpConfig':
                     await this.mcpManager.saveServerConfigs(message.configs);
                     this.sendMcpStatus();
+                    break;
+
+                case 'saveMcpInstructions':
+                    this.mcpInstructions = message.instructions ?? {};
+                    await this.context.globalState.update('mcpInstructions', this.mcpInstructions);
                     break;
 
                 case 'openMcpConfig': {
@@ -334,6 +341,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             type: 'mcpStatus',
             servers,
             configs: this.mcpManager.getServerConfigs(),
+            instructions: this.mcpInstructions,
         });
     }
 
@@ -425,7 +433,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 : `\nShell execution is DISABLED — do not use <run_bash>, it will be blocked.`;
             prompt += `\n\nCurrent workspace: ${wsPath}\n\nFile tree (use these exact paths in tool calls):\n${tree}\n\nIMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist — use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
         }
-        prompt += this.mcpManager.getToolsSystemPromptBlock();
+        prompt += this.mcpManager.getToolsSystemPromptBlock(this.mcpInstructions);
         return prompt;
     }
 

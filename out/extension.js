@@ -23931,7 +23931,7 @@ var McpManager = class {
     this.statusChangeCallback?.();
   }
   // ── Tool access ───────────────────────────────────────────────────────────
-  getToolsSystemPromptBlock() {
+  getToolsSystemPromptBlock(instructions) {
     const connected = Array.from(this.states.values()).filter(
       (s) => s.status === "connected" && s.tools.length > 0
     );
@@ -23950,24 +23950,28 @@ var McpManager = class {
     }
     lines.push("", "Available MCP tools:");
     for (const s of connected) {
-      lines.push("");
+      lines.push("", `Server: ${s.config.name}`);
+      const serverInstructions = instructions?.[s.config.name]?.trim();
+      if (serverInstructions) {
+        lines.push(`  Instructions: ${serverInstructions}`);
+      }
       for (const t of s.tools) {
         lines.push("");
-        lines.push(`Server: ${s.config.name}  Tool: ${t.name}`);
+        lines.push(`  Tool: ${t.name}`);
         if (t.description) {
-          lines.push(`  Description: ${t.description}`);
+          lines.push(`    Description: ${t.description}`);
         }
         const schema = t.inputSchema;
         if (schema.properties) {
           const required2 = schema.required ?? [];
-          lines.push("  Parameters:");
+          lines.push("    Parameters:");
           for (const [k, v] of Object.entries(schema.properties)) {
             const req = required2.includes(k) ? " (required)" : " (optional)";
             const desc = v.description ? `: ${v.description}` : "";
-            lines.push(`    ${k}${req}${desc}`);
+            lines.push(`      ${k}${req}${desc}`);
           }
         }
-        lines.push(`  Usage: <mcp_call server="${s.config.name}" tool="${t.name}">{"param":"value"}</mcp_call>`);
+        lines.push(`    Usage: <mcp_call server="${s.config.name}" tool="${t.name}">{"param":"value"}</mcp_call>`);
       }
     }
     return lines.join("\n");
@@ -23992,6 +23996,7 @@ var ChatViewProvider = class {
     this.context = context;
     this.conversationHistory = [];
     this.pendingTools = /* @__PURE__ */ new Map();
+    this.mcpInstructions = {};
     this.toolIterations = 0;
     this.isProcessingTools = false;
     this.currentModel = "";
@@ -24006,6 +24011,7 @@ var ChatViewProvider = class {
     this.workspaceMode = true;
     this.permissionMode = context.globalState.get("permissionMode", "ask");
     this.shellEnabled = context.globalState.get("shellEnabled", false);
+    this.mcpInstructions = context.globalState.get("mcpInstructions", {});
     const savedHistory = context.globalState.get("chatHistory", []);
     this.conversationHistory = savedHistory;
   }
@@ -24059,6 +24065,10 @@ var ChatViewProvider = class {
         case "saveMcpConfig":
           await this.mcpManager.saveServerConfigs(message.configs);
           this.sendMcpStatus();
+          break;
+        case "saveMcpInstructions":
+          this.mcpInstructions = message.instructions ?? {};
+          await this.context.globalState.update("mcpInstructions", this.mcpInstructions);
           break;
         case "openMcpConfig": {
           const configPath = this.mcpManager.getConfigFilePath();
@@ -24267,7 +24277,8 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
     this.webviewView?.webview.postMessage({
       type: "mcpStatus",
       servers,
-      configs: this.mcpManager.getServerConfigs()
+      configs: this.mcpManager.getServerConfigs(),
+      instructions: this.mcpInstructions
     });
   }
   resetConversation() {
@@ -24362,7 +24373,7 @@ ${tree}
 
 IMPORTANT: Every path shown in the tree above exists. NEVER say a file or directory does not exist \u2014 use <read_file path="..."/> to verify a file and <list_dir path="..."/> to verify a directory. Always read a file before editing it.${shellNote}`;
     }
-    prompt += this.mcpManager.getToolsSystemPromptBlock();
+    prompt += this.mcpManager.getToolsSystemPromptBlock(this.mcpInstructions);
     return prompt;
   }
   // ── User message handler ─────────────────────────────────────────────────

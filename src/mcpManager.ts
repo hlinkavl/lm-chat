@@ -256,7 +256,7 @@ export class McpManager {
 
     // ── Tool access ───────────────────────────────────────────────────────────
 
-    getToolsSystemPromptBlock(): string {
+    getToolsSystemPromptBlock(instructions?: Record<string, string>): string {
         const connected = Array.from(this.states.values()).filter(
             s => s.status === 'connected' && s.tools.length > 0
         );
@@ -279,25 +279,29 @@ export class McpManager {
         lines.push('', 'Available MCP tools:');
 
         for (const s of connected) {
-            lines.push('');
+            lines.push('', `Server: ${s.config.name}`);
+            const serverInstructions = instructions?.[s.config.name]?.trim();
+            if (serverInstructions) {
+                lines.push(`  Instructions: ${serverInstructions}`);
+            }
             for (const t of s.tools) {
                 lines.push('');
-                lines.push(`Server: ${s.config.name}  Tool: ${t.name}`);
-                if (t.description) { lines.push(`  Description: ${t.description}`); }
+                lines.push(`  Tool: ${t.name}`);
+                if (t.description) { lines.push(`    Description: ${t.description}`); }
                 const schema = t.inputSchema as {
                     properties?: Record<string, { description?: string }>;
                     required?: string[];
                 };
                 if (schema.properties) {
                     const required = schema.required ?? [];
-                    lines.push('  Parameters:');
+                    lines.push('    Parameters:');
                     for (const [k, v] of Object.entries(schema.properties)) {
                         const req  = required.includes(k) ? ' (required)' : ' (optional)';
                         const desc = v.description ? `: ${v.description}` : '';
-                        lines.push(`    ${k}${req}${desc}`);
+                        lines.push(`      ${k}${req}${desc}`);
                     }
                 }
-                lines.push(`  Usage: <mcp_call server="${s.config.name}" tool="${t.name}">{"param":"value"}</mcp_call>`);
+                lines.push(`    Usage: <mcp_call server="${s.config.name}" tool="${t.name}">{"param":"value"}</mcp_call>`);
             }
         }
 
