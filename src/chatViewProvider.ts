@@ -307,6 +307,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                     break;
 
+                case 'exportConversation':
+                    await this.exportConversation();
+                    break;
+
                 case 'denyTool': {
                     const tool = this.pendingTools.get(message.id);
                     if (!tool) { break; }
@@ -394,6 +398,77 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.saveHistory();
         this.webviewView?.webview.postMessage({ type: 'reset' });
         vscode.window.showInformationMessage('LM Studio Chat: Conversation cleared');
+    }
+
+    public async exportConversation(): Promise<void> {
+        if (this.conversationHistory.length === 0) {
+            vscode.window.showWarningMessage('No conversation to export.');
+            return;
+        }
+
+        const wsFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!wsFolder) {
+            vscode.window.showWarningMessage('No workspace folder open — cannot export.');
+            return;
+        }
+
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+        const filename = `chat-${timestamp}.md`;
+
+        const exportDir = path.join(wsFolder.uri.fsPath, '.lm-studio-chat');
+        fs.mkdirSync(exportDir, { recursive: true });
+
+        const filePath = path.join(exportDir, filename);
+        const content = this.formatConversation();
+        fs.writeFileSync(filePath, content, 'utf-8');
+
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+        await vscode.window.showTextDocument(doc, { preview: true });
+        vscode.window.showInformationMessage(`Conversation saved to .lm-studio-chat/${filename}`);
+    }
+
+    private formatConversation(): string {
+        const lines: string[] = [];
+        const now = new Date().toLocaleString();
+
+        lines.push('# LM Studio Chat Export');
+        lines.push('');
+        lines.push(`**Exported:** ${now}`);
+        if (this.currentModel) {
+            lines.push(`**Model:** ${this.currentModel}`);
+        }
+        const wsFolder = vscode.workspace.workspaceFolders?.[0];
+        if (wsFolder) {
+            lines.push(`**Workspace:** ${wsFolder.uri.fsPath}`);
+        }
+        lines.push('');
+        lines.push('---');
+        lines.push('');
+
+        for (const msg of this.conversationHistory) {
+            if (msg.role === 'system') { continue; }
+            // Skip internal tool-result and system-control messages
+            if (msg.role === 'user' && (
+                msg.content.startsWith('[Tool result:') ||
+                msg.content.startsWith('[SYSTEM —')
+            )) { continue; }
+
+            if (msg.role === 'user') {
+                lines.push('## You');
+                lines.push('');
+                lines.push(msg.content);
+                lines.push('');
+            } else {
+                lines.push('## Assistant');
+                lines.push('');
+                lines.push(msg.content);
+                lines.push('');
+            }
+        }
+
+        return lines.join('\n');
     }
 
     public async refreshHealthCheck(): Promise<void> {

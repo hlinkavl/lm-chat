@@ -24304,6 +24304,9 @@ Error: ${msg}` });
             skipped: true
           });
           break;
+        case "exportConversation":
+          await this.exportConversation();
+          break;
         case "denyTool": {
           const tool = this.pendingTools.get(message.id);
           if (!tool) {
@@ -24379,6 +24382,66 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
     this.saveHistory();
     this.webviewView?.webview.postMessage({ type: "reset" });
     vscode4.window.showInformationMessage("LM Studio Chat: Conversation cleared");
+  }
+  async exportConversation() {
+    if (this.conversationHistory.length === 0) {
+      vscode4.window.showWarningMessage("No conversation to export.");
+      return;
+    }
+    const wsFolder = vscode4.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode4.window.showWarningMessage("No workspace folder open \u2014 cannot export.");
+      return;
+    }
+    const now = /* @__PURE__ */ new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const filename = `chat-${timestamp}.md`;
+    const exportDir = path4.join(wsFolder.uri.fsPath, ".lm-studio-chat");
+    fs3.mkdirSync(exportDir, { recursive: true });
+    const filePath = path4.join(exportDir, filename);
+    const content = this.formatConversation();
+    fs3.writeFileSync(filePath, content, "utf-8");
+    const doc = await vscode4.workspace.openTextDocument(vscode4.Uri.file(filePath));
+    await vscode4.window.showTextDocument(doc, { preview: true });
+    vscode4.window.showInformationMessage(`Conversation saved to .lm-studio-chat/${filename}`);
+  }
+  formatConversation() {
+    const lines = [];
+    const now = (/* @__PURE__ */ new Date()).toLocaleString();
+    lines.push("# LM Studio Chat Export");
+    lines.push("");
+    lines.push(`**Exported:** ${now}`);
+    if (this.currentModel) {
+      lines.push(`**Model:** ${this.currentModel}`);
+    }
+    const wsFolder = vscode4.workspace.workspaceFolders?.[0];
+    if (wsFolder) {
+      lines.push(`**Workspace:** ${wsFolder.uri.fsPath}`);
+    }
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    for (const msg of this.conversationHistory) {
+      if (msg.role === "system") {
+        continue;
+      }
+      if (msg.role === "user" && (msg.content.startsWith("[Tool result:") || msg.content.startsWith("[SYSTEM \u2014"))) {
+        continue;
+      }
+      if (msg.role === "user") {
+        lines.push("## You");
+        lines.push("");
+        lines.push(msg.content);
+        lines.push("");
+      } else {
+        lines.push("## Assistant");
+        lines.push("");
+        lines.push(msg.content);
+        lines.push("");
+      }
+    }
+    return lines.join("\n");
   }
   async refreshHealthCheck() {
     await this.handleHealthCheck();
@@ -25272,6 +25335,11 @@ function activate(context) {
       }
       const doc = await vscode5.workspace.openTextDocument(vscode5.Uri.file(configPath));
       await vscode5.window.showTextDocument(doc, { preview: false });
+    })
+  );
+  context.subscriptions.push(
+    vscode5.commands.registerCommand("lmStudioChat.exportConversation", async () => {
+      await provider.exportConversation();
     })
   );
   console.log("LM Studio Chat extension activated");

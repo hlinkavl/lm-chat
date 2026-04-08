@@ -74,7 +74,7 @@
             border: 1px solid var(--border);
             border-radius: 3px;
             font-family: var(--font);
-            font-size: 11px;
+            font-size: 10px;
             color: var(--muted);
             background: transparent;
             cursor: pointer;
@@ -127,6 +127,18 @@
         .btn-permission.perm-read { color: var(--muted); }
         .btn-permission.perm-ask  { color: var(--ai);   border-color: rgba(156,220,254,0.35); }
         .btn-permission.perm-edit { color: var(--user); border-color: rgba(226,169,106,0.35); }
+
+        .btn-export {
+            color: var(--ai);
+            border-color: rgba(156,220,254,0.35);
+            display: none;
+        }
+        .btn-export:hover {
+            color: #b8e2ff;
+            border-color: rgba(156,220,254,0.55);
+            background: rgba(156,220,254,0.06);
+        }
+        .btn-export.visible { display: inline-flex; }
 
         .btn-new {
             color: var(--prompt);
@@ -389,7 +401,7 @@
         .sysprompt-wrap textarea::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
         .sysprompt-header {
             display: flex; align-items: center; justify-content: space-between;
-            padding: 6px 10px; font-size: 10px; color: var(--muted);
+            padding: 6px 10px; font-size: 11px; color: var(--muted);
             flex-shrink: 0;
         }
         .sysprompt-save {
@@ -629,6 +641,14 @@
 
                 <div class="topbar-divider"></div>
 
+                <button class="btn btn-export" id="exportBtn" title="Export conversation to file">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                         stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;flex-shrink:0">
+                        <path d="M8 2v8M4 7l4 4 4-4"/>
+                        <path d="M2 12v2h12v-2"/>
+                    </svg>
+                    save
+                </button>
                 <button class="btn btn-new" id="newChatBtn" title="New conversation">
                     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
                          stroke-linecap="round" style="width:11px;height:11px">
@@ -646,7 +666,7 @@
         <div class="sysprompt-header">
             <div>
                 <div>system prompt — sent at the start of every conversation</div>
-                <div style="font-size:11px;color:var(--muted);margin-top:2px">workspace tree + connected MCP tools are appended automatically — everything above is yours to edit</div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px">workspace tree + connected MCP tools are appended automatically — everything above is yours to edit</div>
             </div>
             <div style="display:flex;gap:6px;align-items:center">
                 <button class="sysprompt-save" id="sysPromptSave">save &amp; close</button>
@@ -695,14 +715,14 @@
             <div class="shell-toggle-row">
                 <span class="shell-toggle-label">Shell execution</span>
                 <button class="btn-shell-toggle" id="shellToggleBtn">OFF</button>
-                <span style="font-size:11px;color:var(--muted)">— commands are NOT sandboxed to the workspace</span>
+                <span style="font-size:10px;color:var(--muted)">— commands are NOT sandboxed to the workspace</span>
             </div>
             <div class="mcp-instr-wrap">
                 <div class="mcp-instr-label perms">Permissions</div>
                 <textarea class="mcp-instr-area perms" id="shellPermsArea" spellcheck="false"
                     placeholder="Hard constraints — e.g. &quot;Never run rm -rf. Never modify files outside src/. No curl to external URLs.&quot;"></textarea>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6">
+            <div style="font-size:10px;color:var(--muted);margin-top:10px;line-height:1.6">
                 Permissions are injected as hard constraints in the system prompt every turn. Shell is NOT sandboxed — commands can access the entire system.
             </div>
         </div>
@@ -792,6 +812,7 @@
     const shellToggleBtn  = document.getElementById('shellToggleBtn');
     const shellPermsArea  = document.getElementById('shellPermsArea');
     let shellPermSaveTimer = null;
+    const exportBtn       = document.getElementById('exportBtn');
     const mcpBtn          = document.getElementById('mcpBtn');
     const mcpBadge        = document.getElementById('mcpBadge');
     const mcpWrap         = document.getElementById('mcpWrap');
@@ -1271,6 +1292,7 @@
         const text = inputEl.value.trim();
         if (!text || isStreaming) return;
         hideWelcome();
+        exportBtn.classList.add('visible');
         addMsg('user', text);
         vscode.postMessage({ type: 'sendMessage', text });
         inputEl.value = '';
@@ -1293,6 +1315,7 @@
     urlChip.addEventListener('click',       () => vscode.postMessage({ type: 'changeEndpoint' }));
     modelChip.addEventListener('click',     () => vscode.postMessage({ type: 'selectModel' }));
     newChatBtn.addEventListener('click',    () => vscode.postMessage({ type: 'newChat' }));
+    exportBtn.addEventListener('click',     () => vscode.postMessage({ type: 'exportConversation' }));
     function openShell() {
         closeSysPrompt();
         closeMcp();
@@ -1494,6 +1517,7 @@
                     )) return;
                     addMsg(item.role, item.content);
                 });
+                exportBtn.classList.add('visible');
                 break;
 
             case 'streamStart': startStream(); break;
@@ -1718,6 +1742,7 @@
                 messagesEl.appendChild(welcomeEl);
                 isStreaming = false; currentBodyEl = null; currentRawText = '';
                 typingEl.classList.remove('active');
+                exportBtn.classList.remove('visible');
                 endStream();
                 break;
         }

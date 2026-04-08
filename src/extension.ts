@@ -74,6 +74,13 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register "Export Conversation" command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lmStudioChat.exportConversation', async () => {
+            await provider.exportConversation();
+        })
+    );
+
     console.log('LM Studio Chat extension activated');
 }
 
