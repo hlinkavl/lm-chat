@@ -59,23 +59,21 @@
             padding: 7px 10px 6px;
             flex-wrap: nowrap;
         }
-        .token-bar-wrap {
-            height: 3px; background: var(--border); position: relative;
-            display: none; /* hidden until contextLimit > 0 */
+        .token-bar {
+            height: 2px; background: transparent; position: relative;
+            margin-bottom: -1px; /* overlap the input-area border-top */
         }
-        .token-bar-wrap.visible { display: block; }
         .token-bar-fill {
             height: 100%; width: 0%; transition: width 0.3s ease, background 0.3s ease;
-            background: var(--ai); border-radius: 0;
+            background: var(--ai);
         }
         .token-bar-fill.warn  { background: var(--user); }
         .token-bar-fill.crit  { background: var(--error); }
         .token-label {
-            font-size: 9px; color: var(--muted); cursor: pointer;
-            padding: 0 4px; flex-shrink: 0; user-select: none;
-            letter-spacing: 0.02em;
+            font-size: 10px; color: var(--subtle); cursor: pointer;
+            user-select: none;
         }
-        .token-label:hover { color: var(--fg); }
+        .token-label:hover { color: var(--muted); }
         .token-label.warn  { color: var(--user); }
         .token-label.crit  { color: var(--error); }
         .topbar-right {
@@ -321,7 +319,10 @@
         .send-btn.stop  { background: rgba(244,135,113,0.12); border-color: rgba(244,135,113,0.5); color: var(--error); }
         .send-btn svg   { width: 13px; height: 13px; stroke-width: 2; }
 
-        .hint { font-size: 10px; color: var(--subtle); margin-top: 5px; }
+        .hint {
+            font-size: 10px; color: var(--subtle); margin-top: 5px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
 
         /* ── Tool cards ── */
         .tool-card {
@@ -406,7 +407,8 @@
         /* Hide chat UI when editor is open */
         .app.sysprompt-open .messages,
         .app.sysprompt-open .typing,
-        .app.sysprompt-open .input-area { display: none !important; }
+        .app.sysprompt-open .input-area,
+        .app.sysprompt-open .token-bar { display: none !important; }
 
         .sysprompt-wrap textarea {
             width: 100%; box-sizing: border-box;
@@ -573,7 +575,8 @@
         }
         .app.mcp-open .messages,
         .app.mcp-open .typing,
-        .app.mcp-open .input-area { display: none !important; }
+        .app.mcp-open .input-area,
+        .app.mcp-open .token-bar { display: none !important; }
 
         .mcp-header {
             display: flex; align-items: center; justify-content: space-between;
@@ -626,7 +629,8 @@
         }
         .app.shell-open .messages,
         .app.shell-open .typing,
-        .app.shell-open .input-area { display: none !important; }
+        .app.shell-open .input-area,
+        .app.shell-open .token-bar { display: none !important; }
 
         .shell-toggle-row { display: flex; align-items: center; gap: 10px; padding: 4px 0 14px; }
         .shell-toggle-label { font-size: 11px; color: var(--fg); }
@@ -730,11 +734,7 @@
                     </svg>
                     new
                 </button>
-                <span class="token-label" id="tokenLabel" title="Token usage — click to set context limit"></span>
             </div>
-        </div>
-        <div class="token-bar-wrap" id="tokenBarWrap">
-            <div class="token-bar-fill" id="tokenBarFill"></div>
         </div>
     </div>
 
@@ -841,6 +841,11 @@
         <div class="typing-dot"></div>
     </div>
 
+    <!-- ── Token bar (progress border above input) ── -->
+    <div class="token-bar" id="tokenBar">
+        <div class="token-bar-fill" id="tokenBarFill"></div>
+    </div>
+
     <!-- ── Input ── -->
     <div class="input-area">
         <div class="ctx-bar" id="ctxBar"></div>
@@ -855,7 +860,10 @@
                 </svg>
             </button>
         </div>
-        <div class="hint">Enter to send · Shift+Enter for newline</div>
+        <div class="hint">
+            <span>Enter to send · Shift+Enter for newline</span>
+            <span class="token-label" id="tokenLabel" title="Token usage — click to set context limit"></span>
+        </div>
     </div>
 
 </div>
@@ -891,7 +899,7 @@
     let shellPermSaveTimer = null;
     const exportBtn       = document.getElementById('exportBtn');
     const tokenLabel      = document.getElementById('tokenLabel');
-    const tokenBarWrap    = document.getElementById('tokenBarWrap');
+    const tokenBar        = document.getElementById('tokenBar');
     const tokenBarFill    = document.getElementById('tokenBarFill');
     const mcpBtn          = document.getElementById('mcpBtn');
     const mcpBadge        = document.getElementById('mcpBadge');
@@ -938,28 +946,28 @@
         const limit = msg.contextLimit || 0;
         const total = msg.total_tokens || 0;
         if (!limit) {
-            // No context limit configured — show tokens without bar
-            tokenBarWrap.classList.remove('visible');
+            // No context limit — show plain token count, hide bar
+            tokenBarFill.style.width = '0%';
+            tokenBarFill.className = 'token-bar-fill';
             if (total > 0) {
                 tokenLabel.textContent = fmtTokens(total) + ' tok';
                 tokenLabel.className = 'token-label';
+            } else {
+                tokenLabel.textContent = '';
             }
             return;
         }
         // Show bar + label
-        tokenBarWrap.classList.add('visible');
         const pct = Math.min(100, (total / limit) * 100);
         tokenBarFill.style.width = pct + '%';
         tokenLabel.textContent = fmtTokens(total) + ' / ' + fmtTokens(limit);
 
-        // Color classes
         const level = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
         tokenBarFill.className = 'token-bar-fill' + (level ? ' ' + level : '');
         tokenLabel.className = 'token-label' + (level ? ' ' + level : '');
     }
 
     function resetTokenBar() {
-        tokenBarWrap.classList.remove('visible');
         tokenBarFill.style.width = '0%';
         tokenBarFill.className = 'token-bar-fill';
         tokenLabel.textContent = '';
