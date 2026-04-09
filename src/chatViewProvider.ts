@@ -703,12 +703,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Strip markdown code blocks (fenced and inline) before checking for tool tags.
         // This prevents the parser from acting on tag examples the model quotes in its
         // explanatory text (e.g. when asked to list the rules it follows).
-        // Also unwrap native <tool_call> wrappers that local models sometimes produce
-        // around our XML tags (e.g. <tool_call><read_file path="..."/></tool_call>).
-        const stripped = response
+        const codeStripped = response
             .replace(/```[\s\S]*?```/g, '')   // fenced code blocks
-            .replace(/`[^`\n]+`/g, '')        // inline code spans
-            .replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, '$1');  // unwrap tool_call wrappers
+            .replace(/`[^`\n]+`/g, '');       // inline code spans
+
+        // Detect native model tool-call formats BEFORE unwrapping — once stripped,
+        // the <tool_call> tags vanish and we'd silently miss them.
+        const hasNativeFormat = codeStripped.includes('<tool_call') || codeStripped.includes('[TOOL_CALLS]') ||
+                                codeStripped.includes('<|tool_call|>') || codeStripped.includes('"function_call"');
+
+        // Unwrap native <tool_call> wrappers that local models sometimes produce
+        // around our XML tags (e.g. <tool_call><read_file path="..."/></tool_call>).
+        const stripped = codeStripped
+            .replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, '$1');
 
         // Quick pre-check before running the regex.
         // For tags that require a closing element, require BOTH opening and closing to be present —
@@ -722,15 +729,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             stripped.includes('<search_files') || stripped.includes('<delete_file') ||
             stripped.includes('<create_dir')  || stripped.includes('<rename_file');
 
-        // Detect native model tool-call formats (wrong format — model ignoring instructions)
-        const hasNativeFormat = stripped.includes('<tool_call') || stripped.includes('[TOOL_CALLS]') ||
-                                stripped.includes('<|tool_call|>') || stripped.includes('"function_call"');
-
         if (!hasToolTag && !hasNativeFormat) { return; }
 
         // If the model used a native format instead of our XML tags, send a correction and retry
         if (hasNativeFormat && !hasToolTag) {
-            const correction = `[SYSTEM — TOOL FORMAT ERROR]\nYou used an unsupported tool-calling format (<tool_call>, [TOOL_CALLS], or similar).\nDo NOT use <tool_call> or any other format. Use ONLY the exact XML tags from your instructions:\n  <mcp_call server="SERVER_NAME" tool="TOOL_NAME">{"arg":"val"}</mcp_call>\nPlease retry your tool call using the correct format.`;
+            const correction = `[SYSTEM — TOOL FORMAT ERROR]\nYou used an unsupported tool-calling format (<tool_call>, [TOOL_CALLS], or similar).\nDo NOT use <tool_call> or any other format. Use ONLY the exact XML tags from your instructions:\n  <read_file path="..."/>  <list_dir path="..."/>  <search_files query="..."/>\n  <write_file path="...">content</write_file>  <run_bash>command</run_bash>\n  <patch_file path="..."><search>old</search><replace>new</replace></patch_file>\n  <delete_file path="..."/>  <create_dir path="..."/>  <rename_file from="..." to="..."/>\n  <mcp_call server="NAME" tool="TOOL">{"arg":"val"}</mcp_call>\nPlease retry your tool call using the correct XML format above.`;
             this.conversationHistory.push({ role: 'user', content: correction });
             this.saveHistory();
             this.webviewView.webview.postMessage({
@@ -1100,6 +1103,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         type: 'toolPendingBash', id, command: tool.command,
                     });
                 }
+                continue;
             }
 
             // ── mcp_call ─────────────────────────────────────────────────────

@@ -24667,9 +24667,10 @@ You can read any of the files listed above using read_file with the exact path s
     if (!this.webviewView) {
       return;
     }
-    const stripped = response.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]+`/g, "").replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, "$1");
+    const codeStripped = response.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]+`/g, "");
+    const hasNativeFormat = codeStripped.includes("<tool_call") || codeStripped.includes("[TOOL_CALLS]") || codeStripped.includes("<|tool_call|>") || codeStripped.includes('"function_call"');
+    const stripped = codeStripped.replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, "$1");
     const hasToolTag = stripped.includes("<write_file") && stripped.includes("</write_file>") || stripped.includes("<run_bash>") && stripped.includes("</run_bash>") || stripped.includes("<patch_file") && stripped.includes("</patch_file>") || stripped.includes("<mcp_call") && stripped.includes("</mcp_call>") || stripped.includes("<read_file") || stripped.includes("<list_dir") || stripped.includes("<search_files") || stripped.includes("<delete_file") || stripped.includes("<create_dir") || stripped.includes("<rename_file");
-    const hasNativeFormat = stripped.includes("<tool_call") || stripped.includes("[TOOL_CALLS]") || stripped.includes("<|tool_call|>") || stripped.includes('"function_call"');
     if (!hasToolTag && !hasNativeFormat) {
       return;
     }
@@ -24677,8 +24678,12 @@ You can read any of the files listed above using read_file with the exact path s
       const correction = `[SYSTEM \u2014 TOOL FORMAT ERROR]
 You used an unsupported tool-calling format (<tool_call>, [TOOL_CALLS], or similar).
 Do NOT use <tool_call> or any other format. Use ONLY the exact XML tags from your instructions:
-  <mcp_call server="SERVER_NAME" tool="TOOL_NAME">{"arg":"val"}</mcp_call>
-Please retry your tool call using the correct format.`;
+  <read_file path="..."/>  <list_dir path="..."/>  <search_files query="..."/>
+  <write_file path="...">content</write_file>  <run_bash>command</run_bash>
+  <patch_file path="..."><search>old</search><replace>new</replace></patch_file>
+  <delete_file path="..."/>  <create_dir path="..."/>  <rename_file from="..." to="..."/>
+  <mcp_call server="NAME" tool="TOOL">{"arg":"val"}</mcp_call>
+Please retry your tool call using the correct XML format above.`;
       this.conversationHistory.push({ role: "user", content: correction });
       this.saveHistory();
       this.webviewView.webview.postMessage({
@@ -25128,6 +25133,7 @@ Error: ${msg}`
             command: tool.command
           });
         }
+        continue;
       }
       if (tool.type === "mcp_call") {
         if (tool.parseError) {
