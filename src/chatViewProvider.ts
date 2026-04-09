@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { LmStudioClient, ChatMessage } from './lmStudioClient.js';
+import { LmStudioClient, ChatMessage, TokenUsage } from './lmStudioClient.js';
 import { ContextProvider } from './contextProvider.js';
 import { ToolExecutor } from './toolExecutor.js';
 import { McpManager } from './mcpManager.js';
@@ -38,6 +38,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private isProcessingTools: boolean = false;
     private currentModel: string = '';
     private systemPromptCache: string = '';
+    private lastUsage: TokenUsage | null = null;
 
     constructor(
         private readonly extensionUri: vscode.Uri,
@@ -105,6 +106,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 case 'selectModel':
                     await this.showModelPicker();
                     break;
+
+                case 'setContextLimit': {
+                    const config = vscode.workspace.getConfiguration('lmStudioChat');
+                    const current = config.get<number>('contextLimit', 0);
+                    const input = await vscode.window.showInputBox({
+                        title: 'Context Window Limit (tokens)',
+                        prompt: 'Set the context window size to match your model\'s limit in LM Studio. Set to 0 to hide the token bar.',
+                        value: String(current || ''),
+                        placeHolder: 'e.g. 8192, 32768, 131072',
+                        validateInput: (v) => {
+                            const n = Number(v);
+                            if (v && (isNaN(n) || n < 0 || !Number.isInteger(n))) {
+                                return 'Enter a positive integer (or 0 to hide)';
+                            }
+                            return undefined;
+                        },
+                    });
+                    if (input !== undefined) {
+                        const limit = Number(input) || 0;
+                        await config.update('contextLimit', limit, vscode.ConfigurationTarget.Global);
+                        if (this.lastUsage) { this.sendTokenUsage(this.lastUsage); }
+                        else {
+                            this.webviewView?.webview.postMessage({
+                                type: 'tokenUsage', prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, contextLimit: limit,
+                            });
+                        }
+                    }
+                    break;
+                }
 
                 case 'newChat':
                     this.resetConversation();
@@ -390,11 +420,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    private sendTokenUsage(usage: TokenUsage): void {
+        const config = vscode.workspace.getConfiguration('lmStudioChat');
+        const contextLimit = config.get<number>('contextLimit', 0);
+        this.webviewView?.webview.postMessage({
+            type: 'tokenUsage',
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+            contextLimit,
+        });
+    }
+
     public resetConversation(): void {
         this.conversationHistory = [];
         this.pendingTools.clear();
         this.toolIterations = 0;
         this.isProcessingTools = false;
+        this.lastUsage = null;
         this.saveHistory();
         this.webviewView?.webview.postMessage({ type: 'reset' });
         vscode.window.showInformationMessage('LM Studio Chat: Conversation cleared');
@@ -633,6 +676,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             },
             onError: (error: string) => {
                 this.webviewView?.webview.postMessage({ type: 'streamError', error });
+            },
+            onUsage: (usage: TokenUsage) => {
+                this.lastUsage = usage;
+                this.sendTokenUsage(usage);
             },
         });
     }
@@ -1172,6 +1219,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             },
             onError: (error: string) => {
                 this.webviewView?.webview.postMessage({ type: 'streamError', error });
+            },
+            onUsage: (usage: TokenUsage) => {
+                this.lastUsage = usage;
+                this.sendTokenUsage(usage);
             },
         });
     }

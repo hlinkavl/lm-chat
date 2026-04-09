@@ -59,6 +59,25 @@
             padding: 7px 10px 6px;
             flex-wrap: nowrap;
         }
+        .token-bar-wrap {
+            height: 3px; background: var(--border); position: relative;
+            display: none; /* hidden until contextLimit > 0 */
+        }
+        .token-bar-wrap.visible { display: block; }
+        .token-bar-fill {
+            height: 100%; width: 0%; transition: width 0.3s ease, background 0.3s ease;
+            background: var(--ai); border-radius: 0;
+        }
+        .token-bar-fill.warn  { background: var(--user); }
+        .token-bar-fill.crit  { background: var(--error); }
+        .token-label {
+            font-size: 9px; color: var(--muted); cursor: pointer;
+            padding: 0 4px; flex-shrink: 0; user-select: none;
+            letter-spacing: 0.02em;
+        }
+        .token-label:hover { color: var(--fg); }
+        .token-label.warn  { color: var(--user); }
+        .token-label.crit  { color: var(--error); }
         .topbar-right {
             margin-left: auto;
             display: flex;
@@ -711,7 +730,11 @@
                     </svg>
                     new
                 </button>
+                <span class="token-label" id="tokenLabel" title="Token usage — click to set context limit"></span>
             </div>
+        </div>
+        <div class="token-bar-wrap" id="tokenBarWrap">
+            <div class="token-bar-fill" id="tokenBarFill"></div>
         </div>
     </div>
 
@@ -867,6 +890,9 @@
     const shellPermsArea  = document.getElementById('shellPermsArea');
     let shellPermSaveTimer = null;
     const exportBtn       = document.getElementById('exportBtn');
+    const tokenLabel      = document.getElementById('tokenLabel');
+    const tokenBarWrap    = document.getElementById('tokenBarWrap');
+    const tokenBarFill    = document.getElementById('tokenBarFill');
     const mcpBtn          = document.getElementById('mcpBtn');
     const mcpBadge        = document.getElementById('mcpBadge');
     const mcpWrap         = document.getElementById('mcpWrap');
@@ -900,6 +926,44 @@
     }
     function hideWelcome() {
         if (welcomeEl && welcomeEl.parentNode) welcomeEl.style.display = 'none';
+    }
+
+    // ── Token bar ────────────────────────────────────────────────────────────
+    function fmtTokens(n) {
+        if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+        return String(n);
+    }
+
+    function updateTokenBar(msg) {
+        const limit = msg.contextLimit || 0;
+        const total = msg.total_tokens || 0;
+        if (!limit) {
+            // No context limit configured — show tokens without bar
+            tokenBarWrap.classList.remove('visible');
+            if (total > 0) {
+                tokenLabel.textContent = fmtTokens(total) + ' tok';
+                tokenLabel.className = 'token-label';
+            }
+            return;
+        }
+        // Show bar + label
+        tokenBarWrap.classList.add('visible');
+        const pct = Math.min(100, (total / limit) * 100);
+        tokenBarFill.style.width = pct + '%';
+        tokenLabel.textContent = fmtTokens(total) + ' / ' + fmtTokens(limit);
+
+        // Color classes
+        const level = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
+        tokenBarFill.className = 'token-bar-fill' + (level ? ' ' + level : '');
+        tokenLabel.className = 'token-label' + (level ? ' ' + level : '');
+    }
+
+    function resetTokenBar() {
+        tokenBarWrap.classList.remove('visible');
+        tokenBarFill.style.width = '0%';
+        tokenBarFill.className = 'token-bar-fill';
+        tokenLabel.textContent = '';
+        tokenLabel.className = 'token-label';
     }
 
     // ── Strip agent tool tags before rendering ────────────────────────────────
@@ -1379,6 +1443,7 @@
     modelChip.addEventListener('click',     () => vscode.postMessage({ type: 'selectModel' }));
     newChatBtn.addEventListener('click',    () => vscode.postMessage({ type: 'newChat' }));
     exportBtn.addEventListener('click',     () => vscode.postMessage({ type: 'exportConversation' }));
+    tokenLabel.addEventListener('click',    () => vscode.postMessage({ type: 'setContextLimit' }));
     function openShell() {
         closeSysPrompt();
         closeMcp();
@@ -1883,6 +1948,10 @@
                 break;
             }
 
+            case 'tokenUsage':
+                updateTokenBar(msg);
+                break;
+
             case 'reset':
                 // Disable any pending tool card buttons before wiping, prevents ghost clicks
                 messagesEl.querySelectorAll('.tool-card:not(.resolved) button').forEach(btn => {
@@ -1895,6 +1964,7 @@
                 isStreaming = false; currentBodyEl = null; currentRawText = '';
                 typingEl.classList.remove('active');
                 exportBtn.classList.remove('visible');
+                resetTokenBar();
                 endStream();
                 break;
         }

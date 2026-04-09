@@ -7366,7 +7366,8 @@ var LmStudioClient = class {
       messages,
       stream: true,
       max_tokens: maxTokens,
-      temperature
+      temperature,
+      stream_options: { include_usage: true }
     };
     if (model) {
       body.model = model;
@@ -7412,6 +7413,9 @@ var LmStudioClient = class {
             const content = json2.choices?.[0]?.delta?.content;
             if (content) {
               callbacks.onChunk(content);
+            }
+            if (json2.usage && callbacks.onUsage) {
+              callbacks.onUsage(json2.usage);
             }
           } catch {
           }
@@ -24048,6 +24052,7 @@ var ChatViewProvider = class {
     this.isProcessingTools = false;
     this.currentModel = "";
     this.systemPromptCache = "";
+    this.lastUsage = null;
     this.client = new LmStudioClient();
     this.contextProvider = new ContextProvider();
     this.toolExecutor = new ToolExecutor();
@@ -24094,6 +24099,39 @@ var ChatViewProvider = class {
         case "selectModel":
           await this.showModelPicker();
           break;
+        case "setContextLimit": {
+          const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
+          const current = config2.get("contextLimit", 0);
+          const input = await vscode4.window.showInputBox({
+            title: "Context Window Limit (tokens)",
+            prompt: "Set the context window size to match your model's limit in LM Studio. Set to 0 to hide the token bar.",
+            value: String(current || ""),
+            placeHolder: "e.g. 8192, 32768, 131072",
+            validateInput: (v) => {
+              const n = Number(v);
+              if (v && (isNaN(n) || n < 0 || !Number.isInteger(n))) {
+                return "Enter a positive integer (or 0 to hide)";
+              }
+              return void 0;
+            }
+          });
+          if (input !== void 0) {
+            const limit = Number(input) || 0;
+            await config2.update("contextLimit", limit, vscode4.ConfigurationTarget.Global);
+            if (this.lastUsage) {
+              this.sendTokenUsage(this.lastUsage);
+            } else {
+              this.webviewView?.webview.postMessage({
+                type: "tokenUsage",
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                contextLimit: limit
+              });
+            }
+          }
+          break;
+        }
         case "newChat":
           this.resetConversation();
           break;
@@ -24374,11 +24412,23 @@ Do NOT attempt this action again in this session. Acknowledge the restriction an
       permissions: this.mcpPermissions
     });
   }
+  sendTokenUsage(usage) {
+    const config2 = vscode4.workspace.getConfiguration("lmStudioChat");
+    const contextLimit = config2.get("contextLimit", 0);
+    this.webviewView?.webview.postMessage({
+      type: "tokenUsage",
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      total_tokens: usage.total_tokens,
+      contextLimit
+    });
+  }
   resetConversation() {
     this.conversationHistory = [];
     this.pendingTools.clear();
     this.toolIterations = 0;
     this.isProcessingTools = false;
+    this.lastUsage = null;
     this.saveHistory();
     this.webviewView?.webview.postMessage({ type: "reset" });
     vscode4.window.showInformationMessage("LM Studio Chat: Conversation cleared");
@@ -24591,6 +24641,10 @@ You can read any of the files listed above using read_file with the exact path s
       },
       onError: (error2) => {
         this.webviewView?.webview.postMessage({ type: "streamError", error: error2 });
+      },
+      onUsage: (usage) => {
+        this.lastUsage = usage;
+        this.sendTokenUsage(usage);
       }
     });
   }
@@ -25196,6 +25250,10 @@ Error: ${msg}`
       },
       onError: (error2) => {
         this.webviewView?.webview.postMessage({ type: "streamError", error: error2 });
+      },
+      onUsage: (usage) => {
+        this.lastUsage = usage;
+        this.sendTokenUsage(usage);
       }
     });
   }

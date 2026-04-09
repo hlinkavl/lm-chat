@@ -5,10 +5,17 @@ export interface ChatMessage {
     content: string;
 }
 
+export interface TokenUsage {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+}
+
 export interface StreamCallbacks {
     onChunk: (content: string) => void;
     onDone: () => void;
     onError: (error: string) => void;
+    onUsage?: (usage: TokenUsage) => void;
 }
 
 export class LmStudioClient {
@@ -72,6 +79,7 @@ export class LmStudioClient {
             stream: true,
             max_tokens: maxTokens,
             temperature,
+            stream_options: { include_usage: true },
         };
 
         // Only include model if explicitly set
@@ -130,6 +138,9 @@ export class LmStudioClient {
                         const content = json.choices?.[0]?.delta?.content;
                         if (content) {
                             callbacks.onChunk(content);
+                        }
+                        if (json.usage && callbacks.onUsage) {
+                            callbacks.onUsage(json.usage as TokenUsage);
                         }
                     } catch {
                         // Skip non-JSON lines
