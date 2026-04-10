@@ -24737,29 +24737,10 @@ The .lm-chat/ directory is your workspace data folder. Chat history exports are 
       return;
     }
     const codeStripped = response.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]+`/g, "");
-    const hasNativeFormat = codeStripped.includes("<tool_call") || codeStripped.includes("[TOOL_CALLS]") || codeStripped.includes("<|tool_call|>") || codeStripped.includes('"function_call"');
-    const stripped = codeStripped.replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, "$1");
+    let stripped = codeStripped.replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, "$1");
+    stripped = translateNativeToolCalls(stripped);
     const hasToolTag = stripped.includes("<write_file") && stripped.includes("</write_file>") || stripped.includes("<run_bash>") && stripped.includes("</run_bash>") || stripped.includes("<patch_file") && stripped.includes("</patch_file>") || stripped.includes("<mcp_call") && stripped.includes("</mcp_call>") || stripped.includes("<read_file") || stripped.includes("<list_dir") || stripped.includes("<search_files") || stripped.includes("<delete_file") || stripped.includes("<create_dir") || stripped.includes("<rename_file");
-    if (!hasToolTag && !hasNativeFormat) {
-      return;
-    }
-    if (hasNativeFormat && !hasToolTag) {
-      const correction = `[SYSTEM \u2014 TOOL FORMAT ERROR]
-You used an unsupported tool-calling format (<tool_call>, [TOOL_CALLS], or similar).
-Do NOT use <tool_call> or any other format. Use ONLY the exact XML tags from your instructions:
-  <read_file path="..."/>  <list_dir path="..."/>  <search_files query="..."/>
-  <write_file path="...">content</write_file>  <run_bash>command</run_bash>
-  <patch_file path="..."><search>old</search><replace>new</replace></patch_file>
-  <delete_file path="..."/>  <create_dir path="..."/>  <rename_file from="..." to="..."/>
-  <mcp_call server="NAME" tool="TOOL">{"arg":"val"}</mcp_call>
-Please retry your tool call using the correct XML format above.`;
-      this.conversationHistory.push({ role: "user", content: correction });
-      this.saveHistory();
-      this.webviewView.webview.postMessage({
-        type: "systemMessage",
-        text: "Model used wrong tool format \u2014 correcting and retrying\u2026"
-      });
-      this.continueAfterToolResult();
+    if (!hasToolTag) {
       return;
     }
     const tools = parseToolCalls(stripped);
@@ -25388,6 +25369,140 @@ Error: ${msg}`
     }
   }
 };
+var KNOWN_TOOLS = /* @__PURE__ */ new Set([
+  "read_file",
+  "write_file",
+  "patch_file",
+  "list_dir",
+  "search_files",
+  "delete_file",
+  "create_dir",
+  "rename_file",
+  "run_bash",
+  "mcp_call"
+]);
+function translateNativeToolCalls(text) {
+  let result = text;
+  const mistralCallRe = /(?:<\|?tool_call\|?[^>]*>\s*)?call:(\w+)\b([^]*?)(?:\/>|$)/g;
+  let m;
+  while ((m = mistralCallRe.exec(result)) !== null) {
+    const funcName = m[1];
+    if (!KNOWN_TOOLS.has(funcName)) {
+      continue;
+    }
+    const attrStr = m[2].trim();
+    const xmlTag = nativeAttrsToXml(funcName, attrStr);
+    if (xmlTag) {
+      result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
+      mistralCallRe.lastIndex = m.index + xmlTag.length;
+    }
+  }
+  const jsonToolCallRe = /<\|?tool_call\|?[^>]*>\s*(\{[\s\S]*?\})\s*<\|?\/?tool_call\|?>/g;
+  while ((m = jsonToolCallRe.exec(result)) !== null) {
+    const xmlTag = jsonCallToXml(m[1]);
+    if (xmlTag) {
+      result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
+      jsonToolCallRe.lastIndex = m.index + xmlTag.length;
+    }
+  }
+  const toolCallsArrayRe = /\[TOOL_CALLS\]\s*(\[[\s\S]*?\])/g;
+  while ((m = toolCallsArrayRe.exec(result)) !== null) {
+    try {
+      const arr = JSON.parse(m[1]);
+      if (!Array.isArray(arr)) {
+        continue;
+      }
+      const xmlTags = arr.map((item) => jsonCallToXml(JSON.stringify(item))).filter(Boolean).join("\n");
+      if (xmlTags) {
+        result = result.slice(0, m.index) + xmlTags + result.slice(m.index + m[0].length);
+        toolCallsArrayRe.lastIndex = m.index + xmlTags.length;
+      }
+    } catch {
+      continue;
+    }
+  }
+  const funcCallRe = /\{\s*"function_call"\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+  while ((m = funcCallRe.exec(result)) !== null) {
+    const xmlTag = jsonCallToXml(m[1]);
+    if (xmlTag) {
+      result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
+      funcCallRe.lastIndex = m.index + xmlTag.length;
+    }
+  }
+  return result;
+}
+function jsonCallToXml(jsonStr) {
+  try {
+    const obj = JSON.parse(jsonStr);
+    const name = obj.name || obj.function;
+    if (!name || !KNOWN_TOOLS.has(name)) {
+      return null;
+    }
+    const args = obj.arguments || obj.params || obj.parameters || {};
+    return buildXmlTag(name, args);
+  } catch {
+    return null;
+  }
+}
+function nativeAttrsToXml(funcName, attrStr) {
+  const args = {};
+  const attrRe = /(\w+)\s*=\s*["']([^"']*)["']/g;
+  let am;
+  while ((am = attrRe.exec(attrStr)) !== null) {
+    args[am[1]] = am[2];
+  }
+  return buildXmlTag(funcName, args);
+}
+function buildXmlTag(name, args) {
+  const p = args.path || args.file;
+  switch (name) {
+    case "read_file":
+      return p ? `<read_file path="${p}"/>` : null;
+    case "list_dir":
+      return p ? `<list_dir path="${p}"/>` : null;
+    case "search_files": {
+      const q = args.query;
+      if (!q) {
+        return null;
+      }
+      const g = args.glob ? ` glob="${args.glob}"` : "";
+      return `<search_files query="${q}"${g}/>`;
+    }
+    case "delete_file":
+      return p ? `<delete_file path="${p}"/>` : null;
+    case "create_dir":
+      return p ? `<create_dir path="${p}"/>` : null;
+    case "rename_file": {
+      const from = args.from;
+      const to = args.to;
+      return from && to ? `<rename_file from="${from}" to="${to}"/>` : null;
+    }
+    case "write_file": {
+      const content = args.content || "";
+      return p ? `<write_file path="${p}">${content}</write_file>` : null;
+    }
+    case "run_bash": {
+      const cmd = args.command || args.cmd || "";
+      return cmd ? `<run_bash>${cmd}</run_bash>` : null;
+    }
+    case "patch_file": {
+      const search = args.search || "";
+      const replace = args.replace || "";
+      return p ? `<patch_file path="${p}"><search>${search}</search><replace>${replace}</replace></patch_file>` : null;
+    }
+    case "mcp_call": {
+      const server = args.server;
+      const tool = args.tool;
+      if (!server || !tool) {
+        return null;
+      }
+      const mcpArgs = args.arguments || args.args || "{}";
+      return `<mcp_call server="${server}" tool="${tool}">${mcpArgs}</mcp_call>`;
+    }
+    default:
+      return null;
+  }
+}
 function parseToolCalls(text) {
   const results = [];
   let m;
@@ -25486,7 +25601,7 @@ function parseToolCalls(text) {
   return results.sort((a, b) => a.pos - b.pos);
 }
 function stripToolTagsForExport(text) {
-  return text.replace(/<write_file\b[^>]*>[\s\S]*?<\/write_file>/g, "").replace(/<patch_file\b[^>]*>[\s\S]*?<\/patch_file>/g, "").replace(/<run_bash\b[^>]*>[\s\S]*?<\/run_bash>/g, "").replace(/<read_file\b[^>]*(?:\/>|>\s*(?:<\/read_file\s*>)?)/gi, "").replace(/<list_dir\b[^>]*(?:\/>|>\s*(?:<\/list_dir\s*>)?)/gi, "").replace(/<search_files\b[^>]*(?:\/>|>\s*(?:<\/search_files\s*>)?)/gi, "").replace(/<delete_file\b[^>]*(?:\/>|>\s*(?:<\/delete_file\s*>)?)/gi, "").replace(/<create_dir\b[^>]*(?:\/>|>\s*(?:<\/create_dir\s*>)?)/gi, "").replace(/<rename_file\b[^>]*(?:\/>|>\s*(?:<\/rename_file\s*>)?)/gi, "").replace(/<mcp_call\b[^>]*>[\s\S]*?<\/mcp_call>/g, "").replace(/<\|?tool_call\|?[^>]*>[\s\S]*?<\|?\/?tool_call\|?>/g, "").replace(/\n{3,}/g, "\n\n").trim();
+  return text.replace(/<write_file\b[^>]*>[\s\S]*?<\/write_file>/g, "").replace(/<patch_file\b[^>]*>[\s\S]*?<\/patch_file>/g, "").replace(/<run_bash\b[^>]*>[\s\S]*?<\/run_bash>/g, "").replace(/<read_file\b[^>]*(?:\/>|>\s*(?:<\/read_file\s*>)?)/gi, "").replace(/<list_dir\b[^>]*(?:\/>|>\s*(?:<\/list_dir\s*>)?)/gi, "").replace(/<search_files\b[^>]*(?:\/>|>\s*(?:<\/search_files\s*>)?)/gi, "").replace(/<delete_file\b[^>]*(?:\/>|>\s*(?:<\/delete_file\s*>)?)/gi, "").replace(/<create_dir\b[^>]*(?:\/>|>\s*(?:<\/create_dir\s*>)?)/gi, "").replace(/<rename_file\b[^>]*(?:\/>|>\s*(?:<\/rename_file\s*>)?)/gi, "").replace(/<mcp_call\b[^>]*>[\s\S]*?<\/mcp_call>/g, "").replace(/<\|?tool_call\|?[^>]*>[\s\S]*?<\|?\/?tool_call\|?>/g, "").replace(/(?:<\|?tool_call\|?[^>]*>\s*)?call:\w+\b[^]*?(?:\/>|$)/g, "").replace(/\[TOOL_CALLS\]\s*\[[\s\S]*?\]/g, "").replace(/\{\s*"function_call"\s*:\s*\{[\s\S]*?\}\s*\}/g, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 function diffSearchReplace(search, replace) {
   const dels = search.split("\n").map((t) => ({ type: "del", text: t }));

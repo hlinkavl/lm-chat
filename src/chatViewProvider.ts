@@ -722,15 +722,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             .replace(/```[\s\S]*?```/g, '')   // fenced code blocks
             .replace(/`[^`\n]+`/g, '');       // inline code spans
 
-        // Detect native model tool-call formats BEFORE unwrapping — once stripped,
-        // the <tool_call> tags vanish and we'd silently miss them.
-        const hasNativeFormat = codeStripped.includes('<tool_call') || codeStripped.includes('[TOOL_CALLS]') ||
-                                codeStripped.includes('<|tool_call|>') || codeStripped.includes('"function_call"');
-
         // Unwrap native <tool_call> wrappers that local models sometimes produce
         // around our XML tags (e.g. <tool_call><read_file path="..."/></tool_call>).
-        const stripped = codeStripped
+        let stripped = codeStripped
             .replace(/<\|?tool_call\|?[^>]*>([\s\S]*?)<\|?\/?tool_call\|?>/g, '$1');
+
+        // Translate native tool-call formats (Mistral-style, JSON-based, etc.)
+        // into our XML tags so they get parsed and executed normally.
+        stripped = translateNativeToolCalls(stripped);
 
         // Quick pre-check before running the regex.
         // For tags that require a closing element, require BOTH opening and closing to be present —
@@ -744,20 +743,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             stripped.includes('<search_files') || stripped.includes('<delete_file') ||
             stripped.includes('<create_dir')  || stripped.includes('<rename_file');
 
-        if (!hasToolTag && !hasNativeFormat) { return; }
-
-        // If the model used a native format instead of our XML tags, send a correction and retry
-        if (hasNativeFormat && !hasToolTag) {
-            const correction = `[SYSTEM — TOOL FORMAT ERROR]\nYou used an unsupported tool-calling format (<tool_call>, [TOOL_CALLS], or similar).\nDo NOT use <tool_call> or any other format. Use ONLY the exact XML tags from your instructions:\n  <read_file path="..."/>  <list_dir path="..."/>  <search_files query="..."/>\n  <write_file path="...">content</write_file>  <run_bash>command</run_bash>\n  <patch_file path="..."><search>old</search><replace>new</replace></patch_file>\n  <delete_file path="..."/>  <create_dir path="..."/>  <rename_file from="..." to="..."/>\n  <mcp_call server="NAME" tool="TOOL">{"arg":"val"}</mcp_call>\nPlease retry your tool call using the correct XML format above.`;
-            this.conversationHistory.push({ role: 'user', content: correction });
-            this.saveHistory();
-            this.webviewView.webview.postMessage({
-                type: 'systemMessage',
-                text: 'Model used wrong tool format — correcting and retrying…',
-            });
-            this.continueAfterToolResult();
-            return;
-        }
+        if (!hasToolTag) { return; }
 
         // Parse from the stripped text so code-block examples are never executed
         const tools = parseToolCalls(stripped);
@@ -1305,6 +1291,144 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 }
 
+// ── Native tool-call translator ──────────────────────────────────────────────
+// Local models often produce tool calls in their native format instead of our
+// XML tags. Rather than rejecting and retrying (which usually loops forever),
+// we translate them into our XML format so parseToolCalls() handles the rest.
+
+const KNOWN_TOOLS = new Set([
+    'read_file', 'write_file', 'patch_file', 'list_dir', 'search_files',
+    'delete_file', 'create_dir', 'rename_file', 'run_bash', 'mcp_call',
+]);
+
+function translateNativeToolCalls(text: string): string {
+    let result = text;
+
+    // ── Format 1: Mistral-style  <|tool_call>call:FUNC param="val" .../>  ────
+    // Also handles variants without the pipe: <tool_call>call:FUNC .../>
+    // The outer <tool_call> wrapper may already be stripped, so match bare call: too
+    const mistralCallRe = /(?:<\|?tool_call\|?[^>]*>\s*)?call:(\w+)\b([^]*?)(?:\/>|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = mistralCallRe.exec(result)) !== null) {
+        const funcName = m[1];
+        if (!KNOWN_TOOLS.has(funcName)) { continue; }
+        const attrStr = m[2].trim();
+        const xmlTag = nativeAttrsToXml(funcName, attrStr);
+        if (xmlTag) {
+            result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
+            mistralCallRe.lastIndex = m.index + xmlTag.length;
+        }
+    }
+
+    // ── Format 2: JSON inside <tool_call> tags ───────────────────────────────
+    // e.g. <tool_call>{"name":"list_dir","arguments":{"path":".lm-chat/"}}</tool_call>
+    const jsonToolCallRe = /<\|?tool_call\|?[^>]*>\s*(\{[\s\S]*?\})\s*<\|?\/?tool_call\|?>/g;
+    while ((m = jsonToolCallRe.exec(result)) !== null) {
+        const xmlTag = jsonCallToXml(m[1]);
+        if (xmlTag) {
+            result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
+            jsonToolCallRe.lastIndex = m.index + xmlTag.length;
+        }
+    }
+
+    // ── Format 3: [TOOL_CALLS] [{"name":"...","arguments":{...}}] ────────────
+    const toolCallsArrayRe = /\[TOOL_CALLS\]\s*(\[[\s\S]*?\])/g;
+    while ((m = toolCallsArrayRe.exec(result)) !== null) {
+        try {
+            const arr = JSON.parse(m[1]);
+            if (!Array.isArray(arr)) { continue; }
+            const xmlTags = arr.map((item: any) => jsonCallToXml(JSON.stringify(item))).filter(Boolean).join('\n');
+            if (xmlTags) {
+                result = result.slice(0, m.index) + xmlTags + result.slice(m.index + m[0].length);
+                toolCallsArrayRe.lastIndex = m.index + xmlTags.length;
+            }
+        } catch { continue; }
+    }
+
+    // ── Format 4: {"function_call":{"name":"...","arguments":{...}}} ─────────
+    const funcCallRe = /\{\s*"function_call"\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+    while ((m = funcCallRe.exec(result)) !== null) {
+        const xmlTag = jsonCallToXml(m[1]);
+        if (xmlTag) {
+            result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
+            funcCallRe.lastIndex = m.index + xmlTag.length;
+        }
+    }
+
+    return result;
+}
+
+/** Convert JSON-style tool call to XML tag */
+function jsonCallToXml(jsonStr: string): string | null {
+    try {
+        const obj = JSON.parse(jsonStr);
+        const name = obj.name || obj.function;
+        if (!name || !KNOWN_TOOLS.has(name)) { return null; }
+        const args: Record<string, string> = obj.arguments || obj.params || obj.parameters || {};
+        return buildXmlTag(name, args);
+    } catch { return null; }
+}
+
+/** Convert key="value" attribute string to XML tag */
+function nativeAttrsToXml(funcName: string, attrStr: string): string | null {
+    const args: Record<string, string> = {};
+    // Match key="value" or key='value' pairs
+    const attrRe = /(\w+)\s*=\s*["']([^"']*)["']/g;
+    let am: RegExpExecArray | null;
+    while ((am = attrRe.exec(attrStr)) !== null) {
+        args[am[1]] = am[2];
+    }
+    return buildXmlTag(funcName, args);
+}
+
+/** Build the proper XML tag string for a given tool name and arguments */
+function buildXmlTag(name: string, args: Record<string, string>): string | null {
+    const p = args.path || args.file;
+    switch (name) {
+        case 'read_file':
+            return p ? `<read_file path="${p}"/>` : null;
+        case 'list_dir':
+            return p ? `<list_dir path="${p}"/>` : null;
+        case 'search_files': {
+            const q = args.query;
+            if (!q) { return null; }
+            const g = args.glob ? ` glob="${args.glob}"` : '';
+            return `<search_files query="${q}"${g}/>`;
+        }
+        case 'delete_file':
+            return p ? `<delete_file path="${p}"/>` : null;
+        case 'create_dir':
+            return p ? `<create_dir path="${p}"/>` : null;
+        case 'rename_file': {
+            const from = args.from;
+            const to = args.to;
+            return from && to ? `<rename_file from="${from}" to="${to}"/>` : null;
+        }
+        case 'write_file': {
+            const content = args.content || '';
+            return p ? `<write_file path="${p}">${content}</write_file>` : null;
+        }
+        case 'run_bash': {
+            const cmd = args.command || args.cmd || '';
+            return cmd ? `<run_bash>${cmd}</run_bash>` : null;
+        }
+        case 'patch_file': {
+            const search = args.search || '';
+            const replace = args.replace || '';
+            return p ? `<patch_file path="${p}"><search>${search}</search><replace>${replace}</replace></patch_file>` : null;
+        }
+        case 'mcp_call': {
+            const server = args.server;
+            const tool = args.tool;
+            if (!server || !tool) { return null; }
+            const mcpArgs = args.arguments || args.args || '{}';
+            return `<mcp_call server="${server}" tool="${tool}">${mcpArgs}</mcp_call>`;
+        }
+        default:
+            return null;
+    }
+}
+
 // ── Tool call parser ─────────────────────────────────────────────────────────
 
 type ToolCall =
@@ -1439,6 +1563,10 @@ function stripToolTagsForExport(text: string): string {
         .replace(/<rename_file\b[^>]*(?:\/>|>\s*(?:<\/rename_file\s*>)?)/gi, '')
         .replace(/<mcp_call\b[^>]*>[\s\S]*?<\/mcp_call>/g, '')
         .replace(/<\|?tool_call\|?[^>]*>[\s\S]*?<\|?\/?tool_call\|?>/g, '')
+        // Native formats: call:func_name ..., [TOOL_CALLS] [...], {"function_call":...}
+        .replace(/(?:<\|?tool_call\|?[^>]*>\s*)?call:\w+\b[^]*?(?:\/>|$)/g, '')
+        .replace(/\[TOOL_CALLS\]\s*\[[\s\S]*?\]/g, '')
+        .replace(/\{\s*"function_call"\s*:\s*\{[\s\S]*?\}\s*\}/g, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }

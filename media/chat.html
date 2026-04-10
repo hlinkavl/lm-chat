@@ -1070,8 +1070,13 @@
 
         const icon = document.createElement('span');
         icon.className = 'tool-card-icon';
-        icon.style.color = 'var(--ai)';
-        icon.textContent = '✎';
+        if (msg.isPatch) {
+            icon.textContent = '🩹';
+            icon.style.color = '#c586c0';
+        } else {
+            icon.textContent = '✏️';
+            icon.style.color = 'var(--ai)';
+        }
 
         const pathEl = document.createElement('span');
         pathEl.className = 'tool-card-path';
@@ -1146,15 +1151,11 @@
         icon.className = 'tool-card-icon';
 
         // Tool-specific icons and colors
-        const opIcons = { delete: '🗑️', mkdir: '📁', rename: '↔️' };
-        const opColors = { delete: '#f48771', mkdir: '#dcc864', rename: '#c586c0' };
-        if (msg.toolOp && opIcons[msg.toolOp]) {
-            icon.textContent = opIcons[msg.toolOp];
-            icon.style.color = opColors[msg.toolOp] || 'var(--string)';
-        } else {
-            icon.style.color = 'var(--string)';
-            icon.textContent = '$';
-        }
+        const opIcons = { delete: '🗑️', mkdir: '📂', rename: '🔀', bash: '⚙️' };
+        const opColors = { delete: '#f48771', mkdir: '#dcc864', rename: '#c586c0', bash: 'var(--string)' };
+        const op = msg.toolOp || 'bash';
+        icon.textContent = opIcons[op] || '⚙️';
+        icon.style.color = opColors[op] || 'var(--string)';
 
         const cmdEl = document.createElement('span');
         cmdEl.className = 'bash-cmd';
