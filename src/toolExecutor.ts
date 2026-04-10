@@ -284,15 +284,74 @@ export class ToolExecutor {
         const absPath = path.isAbsolute(dirPath) ? dirPath : path.join(wsRoot, dirPath);
         this.assertInWorkspace(absPath, wsRoot);
 
-        let entries: [string, vscode.FileType][];
+        let resolvedPath = absPath;
+        let resolvedLabel = dirPath;
+
+        // ── Try exact path first ─────────────────────────────────────────────
+        let entries: [string, vscode.FileType][] | null = null;
         try {
             entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(absPath));
         } catch {
-            throw new Error(`list_dir: directory not found: "${dirPath}"`);
+            // Fall through to fuzzy directory search
+        }
+
+        // ── Fuzzy directory search ───────────────────────────────────────────
+        if (!entries) {
+            const dirName = path.basename(dirPath);
+            // Find files inside directories matching the name to discover directory locations
+            const filesInside = await vscode.workspace.findFiles(
+                `**/${dirName}/*`, '**/node_modules/**', 50
+            );
+            // Also find files matching **/{dirName}/**/* for nested content
+            const filesDeeper = await vscode.workspace.findFiles(
+                `**/${dirName}/**/*`, '**/node_modules/**', 50
+            );
+            const allFiles = [...filesInside, ...filesDeeper];
+
+            // Extract unique parent directories that end with the target name
+            const candidateDirs = new Set<string>();
+            const lowerDirName = dirName.toLowerCase();
+            for (const f of allFiles) {
+                const rel = path.relative(wsRoot, f.fsPath).replace(/\\/g, '/');
+                const parts = rel.split('/');
+                // Find which segment matches the directory name
+                for (let i = 0; i < parts.length - 1; i++) {
+                    if (parts[i].toLowerCase() === lowerDirName) {
+                        candidateDirs.add(parts.slice(0, i + 1).join('/'));
+                        break;
+                    }
+                }
+            }
+
+            if (candidateDirs.size === 0) {
+                throw new Error(
+                    `list_dir: directory not found: "${dirPath}".\n` +
+                    `No directory named "${dirName}" exists in the workspace. ` +
+                    `Use the workspace file tree or <search_files> to find the correct path.`
+                );
+            }
+
+            if (candidateDirs.size === 1) {
+                const resolvedRel = [...candidateDirs][0];
+                resolvedPath = path.join(wsRoot, resolvedRel);
+                resolvedLabel = resolvedRel;
+                try {
+                    entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(resolvedPath));
+                } catch {
+                    throw new Error(`list_dir: directory not found: "${dirPath}"`);
+                }
+            } else {
+                // Multiple matches — tell the model so it can ask the user
+                const sorted = [...candidateDirs].sort();
+                throw new Error(
+                    `"${dirPath}" is ambiguous — found ${sorted.length} directories:\n` +
+                    sorted.map(p => `  - ${p}`).join('\n') +
+                    '\nAsk the user which one they meant and retry with the full path.'
+                );
+            }
         }
 
         entries.sort(([aName, aType], [bName, bType]) => {
-            // Directories first, then files, then alphabetical
             const aIsDir = aType === vscode.FileType.Directory ? 0 : 1;
             const bIsDir = bType === vscode.FileType.Directory ? 0 : 1;
             return aIsDir - bIsDir || aName.localeCompare(bName);
@@ -303,7 +362,10 @@ export class ToolExecutor {
             return `${label} ${name}`;
         });
 
-        return `Contents of "${dirPath}":\n${lines.join('\n')}`;
+        const header = resolvedLabel !== dirPath
+            ? `[Resolved "${dirPath}" → "${resolvedLabel}"]\nContents of "${resolvedLabel}":`
+            : `Contents of "${dirPath}":`;
+        return `${header}\n${lines.join('\n')}`;
     }
 
     async computeDiff(filePath: string, newContent: string): Promise<DiffLine[]> {
