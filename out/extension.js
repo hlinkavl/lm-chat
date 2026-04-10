@@ -25383,18 +25383,23 @@ var KNOWN_TOOLS = /* @__PURE__ */ new Set([
 ]);
 function translateNativeToolCalls(text) {
   let result = text;
-  const mistralCallRe = /(?:<\|?tool_call\|?[^>]*>\s*)?call:(\w+)\b([^]*?)(?:\/>|$)/g;
+  const TOOL_NAMES_RE = [...KNOWN_TOOLS].join("|");
+  const nativeCallRe = new RegExp(
+    `(?:<\\|?tool_call\\|?[^>]*>\\s*)?(?:call:)?(${TOOL_NAMES_RE})\\b([^]*?)(?:\\/>|$)`,
+    "g"
+  );
   let m;
-  while ((m = mistralCallRe.exec(result)) !== null) {
+  while ((m = nativeCallRe.exec(result)) !== null) {
     const funcName = m[1];
-    if (!KNOWN_TOOLS.has(funcName)) {
+    const attrStr = m[2].trim();
+    const charBefore = m.index > 0 ? result[m.index - 1] : "";
+    if (charBefore === "<") {
       continue;
     }
-    const attrStr = m[2].trim();
     const xmlTag = nativeAttrsToXml(funcName, attrStr);
     if (xmlTag) {
       result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
-      mistralCallRe.lastIndex = m.index + xmlTag.length;
+      nativeCallRe.lastIndex = m.index + xmlTag.length;
     }
   }
   const jsonToolCallRe = /<\|?tool_call\|?[^>]*>\s*(\{[\s\S]*?\})\s*<\|?\/?tool_call\|?>/g;

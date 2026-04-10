@@ -1304,19 +1304,29 @@ const KNOWN_TOOLS = new Set([
 function translateNativeToolCalls(text: string): string {
     let result = text;
 
-    // ── Format 1: Mistral-style  <|tool_call>call:FUNC param="val" .../>  ────
-    // Also handles variants without the pipe: <tool_call>call:FUNC .../>
-    // The outer <tool_call> wrapper may already be stripped, so match bare call: too
-    const mistralCallRe = /(?:<\|?tool_call\|?[^>]*>\s*)?call:(\w+)\b([^]*?)(?:\/>|$)/g;
+    // ── Format 1: Mistral-style and bare tool names ────────────────────────
+    // Matches:  call:read_file path="..." />
+    //           <|tool_call>call:list_dir path="..." />
+    //           read_file path="..."  (bare, after unwrap strips <tool_call> wrapper)
+    //           read_file path="..." />
+    //           read_file(path=".lm-chat/")
+    // The KNOWN_TOOLS guard ensures we don't match random English words.
+    const TOOL_NAMES_RE = [...KNOWN_TOOLS].join('|');
+    const nativeCallRe = new RegExp(
+        `(?:<\\|?tool_call\\|?[^>]*>\\s*)?(?:call:)?(${TOOL_NAMES_RE})\\b([^]*?)(?:\\/>|$)`, 'g'
+    );
     let m: RegExpExecArray | null;
-    while ((m = mistralCallRe.exec(result)) !== null) {
+    while ((m = nativeCallRe.exec(result)) !== null) {
         const funcName = m[1];
-        if (!KNOWN_TOOLS.has(funcName)) { continue; }
         const attrStr = m[2].trim();
+        // Skip if the match is inside a proper XML tag (handled by parseToolCalls)
+        // e.g. <read_file path="..."/> — the char before the tool name is '<'
+        const charBefore = m.index > 0 ? result[m.index - 1] : '';
+        if (charBefore === '<') { continue; }
         const xmlTag = nativeAttrsToXml(funcName, attrStr);
         if (xmlTag) {
             result = result.slice(0, m.index) + xmlTag + result.slice(m.index + m[0].length);
-            mistralCallRe.lastIndex = m.index + xmlTag.length;
+            nativeCallRe.lastIndex = m.index + xmlTag.length;
         }
     }
 
