@@ -24614,7 +24614,7 @@ You can read any of the files listed above using read_file with the exact path s
     if (this.systemPromptCache) {
       messages.push({ role: "system", content: this.systemPromptCache });
     }
-    messages.push(...this.trimHistory(this.conversationHistory, config2));
+    messages.push(...this.prepareHistoryForModel(this.trimHistory(this.conversationHistory, config2)));
     messages.push({ role: "user", content: text });
     this.conversationHistory.push({ role: "user", content: text });
     this.saveHistory();
@@ -25232,7 +25232,7 @@ Error: ${msg}`
     if (this.systemPromptCache) {
       messages.push({ role: "system", content: this.systemPromptCache });
     }
-    messages.push(...this.trimHistory(this.conversationHistory, config2));
+    messages.push(...this.prepareHistoryForModel(this.trimHistory(this.conversationHistory, config2)));
     let fullResponse = "";
     this.webviewView.webview.postMessage({ type: "streamStart" });
     await this.client.streamChat(messages, {
@@ -25261,6 +25261,23 @@ Error: ${msg}`
         this.lastUsage = usage;
         this.sendTokenUsage(usage);
       }
+    });
+  }
+  // ── Strip tool tags from assistant messages before sending to the model ──
+  // Raw XML tags stay in conversationHistory (for export / card rendering),
+  // but local models get confused when they see their own prior tool tags —
+  // they treat them as completed work and stop.  Strip them so the model
+  // only sees its reasoning text + the tool-result user messages.
+  prepareHistoryForModel(history) {
+    return history.map((m) => {
+      if (m.role !== "assistant") {
+        return m;
+      }
+      const cleaned = stripToolTagsForExport(m.content);
+      if (!cleaned.trim()) {
+        return { role: m.role, content: "[Executed tool calls]" };
+      }
+      return { role: m.role, content: cleaned };
     });
   }
   // ── History trim ─────────────────────────────────────────────────────────

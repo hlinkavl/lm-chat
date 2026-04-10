@@ -646,7 +646,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             messages.push({ role: 'system', content: this.systemPromptCache });
         }
 
-        messages.push(...this.trimHistory(this.conversationHistory, config));
+        messages.push(...this.prepareHistoryForModel(this.trimHistory(this.conversationHistory, config)));
         messages.push({ role: 'user', content: text });
 
         this.conversationHistory.push({ role: 'user', content: text });
@@ -1198,7 +1198,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (this.systemPromptCache) {
             messages.push({ role: 'system', content: this.systemPromptCache });
         }
-        messages.push(...this.trimHistory(this.conversationHistory, config));
+        messages.push(...this.prepareHistoryForModel(this.trimHistory(this.conversationHistory, config)));
 
         let fullResponse = '';
         this.webviewView.webview.postMessage({ type: 'streamStart' });
@@ -1228,6 +1228,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 this.lastUsage = usage;
                 this.sendTokenUsage(usage);
             },
+        });
+    }
+
+    // ── Strip tool tags from assistant messages before sending to the model ──
+    // Raw XML tags stay in conversationHistory (for export / card rendering),
+    // but local models get confused when they see their own prior tool tags —
+    // they treat them as completed work and stop.  Strip them so the model
+    // only sees its reasoning text + the tool-result user messages.
+
+    private prepareHistoryForModel(history: ChatMessage[]): ChatMessage[] {
+        return history.map(m => {
+            if (m.role !== 'assistant') { return m; }
+            const cleaned = stripToolTagsForExport(m.content);
+            if (!cleaned.trim()) {
+                return { role: m.role, content: '[Executed tool calls]' };
+            }
+            return { role: m.role, content: cleaned };
         });
     }
 
