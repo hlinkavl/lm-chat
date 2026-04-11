@@ -127,9 +127,11 @@ Call \`<write_file path=".lm-chat/MEMORY.md">\` with the FULL content: all exist
    - [CTX] Project detail worth remembering
    \`\`\`
 Do NOT duplicate entries already present. Do NOT store anything sensitive (passwords, tokens, secrets).
-Strip ALL formatting before writing — no bold (**), no backticks (\\\`), no italics, no markdown markup of any kind. MEMORY.md must contain plain text only. For example write \`my_view\` as just my_view.
 
-**Step 4 — Confirm:**
+**Step 4 — Verify:**
+After write_file executes, call \`<read_file path=".lm-chat/MEMORY.md"/>\` one more time and check that everything was saved correctly — especially names of tables, columns, views, variables, and other identifiers. If anything is missing or blank, call write_file again with the corrected content.
+
+**Step 5 — Confirm:**
 Tell the user what you saved, grouped by category.
 
 **CRITICAL:** This skill is NOT complete until you have called BOTH \`<read_file>\` AND \`<write_file>\`. If you only list insights without writing them, the memory is empty and the skill has failed. You MUST make the tool calls.
