@@ -24145,11 +24145,15 @@ Slash-command skills you can invoke. When the user types a command listed here, 
 
 **When invoked:** The user types \`/save\` (with or without additional context).
 
-**Instructions:**
-1. Review the entire conversation so far.
-2. Identify and prioritize these categories (most important first):
+**Workflow (follow this exact sequence \u2014 each step requires a real tool call):**
+
+**Step 1 \u2014 Read existing memory:**
+Call \`<read_file path=".lm-chat/MEMORY.md"/>\` and WAIT for the result before continuing. You need the current content to avoid duplicates and to merge new entries with existing ones.
+
+**Step 2 \u2014 Review the conversation and identify entries:**
+After you have the file content, review the conversation and collect entries in these categories (most important first):
    **a) Failed attempts & wrong approaches:**
-   - Tool calls that failed and WHY they failed (wrong path, bad syntax, missing arg, etc.)
+   - Tool calls that failed and WHY (wrong path, bad syntax, missing arg, etc.)
    - Approaches that didn't work and what worked instead
    - Wrong assumptions that led to wasted turns
    - Incorrect tool usage patterns (e.g. used write_file when patch_file was needed)
@@ -24163,8 +24167,9 @@ Slash-command skills you can invoke. When the user types a command listed here, 
    **d) Project context:**
    - Technical details not obvious from the code
    - Architecture decisions and their reasoning
-3. Read the current \`.lm-chat/MEMORY.md\` file using \`<read_file path=".lm-chat/MEMORY.md"/>\` (it may already have entries).
-4. Write the updated file using \`<write_file>\` with the full content (existing + new entries). Append new entries under a heading with today's date:
+
+**Step 3 \u2014 Write the updated file:**
+Call \`<write_file path=".lm-chat/MEMORY.md">\` with the FULL content: all existing entries from Step 1 PLUS the new entries from Step 2. Append new entries under a date heading:
    \`\`\`
    ## YYYY-MM-DD
    - [FAIL] Tried X but it failed because Y \u2014 use Z instead
@@ -24172,11 +24177,12 @@ Slash-command skills you can invoke. When the user types a command listed here, 
    - [PREF] User prefers X over Y
    - [CTX] Project detail worth remembering
    \`\`\`
-5. Do NOT duplicate information already in MEMORY.md.
-6. Do NOT store anything sensitive (passwords, tokens, secrets).
-7. Confirm to the user what you saved, grouped by category.
+Do NOT duplicate entries already present. Do NOT store anything sensitive (passwords, tokens, secrets).
 
-**IMPORTANT:** Always use the built-in \`<read_file>\` and \`<write_file>\` tools to read and update MEMORY.md. Do NOT use MCP tools or shell commands for this.
+**Step 4 \u2014 Confirm:**
+Tell the user what you saved, grouped by category.
+
+**CRITICAL:** This skill is NOT complete until you have called BOTH \`<read_file>\` AND \`<write_file>\`. If you only list insights without writing them, the memory is empty and the skill has failed. You MUST make the tool calls.
 
 ---
 
