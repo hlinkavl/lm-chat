@@ -24193,13 +24193,17 @@ Tell the user what you saved, grouped by category.
 
 **When invoked:** The user types \`/recall\`.
 
-**Instructions:**
-1. Read the \`.lm-chat/MEMORY.md\` file using \`<read_file path=".lm-chat/MEMORY.md"/>\`.
-2. If the file is empty or has no entries, say: "Memory is empty \u2014 nothing to recall."
-3. If there are entries, internalize them silently and respond with a short confirmation like: "Up to date." or "Recalled N entries."
-4. Do NOT list or summarize the entries back to the user unless they explicitly ask.
+**Workflow (requires a tool call):**
 
-**IMPORTANT:** Always use the built-in \`<read_file>\` tool. Do NOT use MCP tools or shell commands.
+**Step 1 \u2014 Read memory:**
+You MUST call \`<read_file path=".lm-chat/MEMORY.md"/>\` and WAIT for the result. Do NOT skip this step.
+
+**Step 2 \u2014 Respond:**
+- If the file is empty or has no entries, say: "Memory is empty \u2014 nothing to recall."
+- If there are entries, internalize them silently and respond with a short confirmation like: "Up to date." or "Recalled N entries."
+- Do NOT list or summarize the entries unless the user explicitly asks.
+
+**CRITICAL:** This skill REQUIRES a \`<read_file>\` tool call. If you respond without calling read_file first, you have NOT loaded memory and the skill has failed.
 
 ---
 
@@ -24209,12 +24213,18 @@ Tell the user what you saved, grouped by category.
 
 **When invoked:** The user types \`/forget\`.
 
-**Instructions:**
-1. Write an empty file using \`<write_file path=".lm-chat/MEMORY.md">\\n</write_file>\` (this clears all content).
-2. Confirm to the user: "Memory cleared."
-3. Do NOT ask for confirmation before clearing \u2014 the user already chose to run /forget.
+**Workflow (requires a tool call):**
 
-**IMPORTANT:** Always use the built-in \`<write_file>\` tool. Do NOT use MCP tools or shell commands.
+**Step 1 \u2014 Clear the file:**
+You MUST call the following tool call EXACTLY as shown \u2014 include it in your response:
+\`<write_file path=".lm-chat/MEMORY.md">
+</write_file>\`
+This overwrites MEMORY.md with empty content. Do NOT skip this step. Do NOT just say "Memory cleared" without making the tool call.
+
+**Step 2 \u2014 Confirm:**
+After the write_file tool has executed, say: "Memory cleared."
+
+**CRITICAL:** This skill REQUIRES a \`<write_file>\` tool call. Saying "Memory cleared" without actually calling write_file means the memory is NOT cleared and the skill has failed. You MUST include the tool call in your response.
 `;
     fs3.writeFileSync(path4.join(root, "SKILLS.md"), defaultSkills, "utf-8");
   }
