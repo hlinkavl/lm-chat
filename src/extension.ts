@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chatViewProvider.js';
+import { API_TOKEN_SECRET_KEY } from './lmStudioClient.js';
 
 export function activate(context: vscode.ExtensionContext) {
     const provider = new ChatViewProvider(context.extensionUri, context);
@@ -56,6 +57,29 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('lmChat.selectModel', async () => {
             await provider.showModelPicker();
+        })
+    );
+
+    // Register "Set API Token" command — stored in VS Code SecretStorage, never in settings.json
+    context.subscriptions.push(
+        vscode.commands.registerCommand('lmChat.setApiToken', async () => {
+            const value = await vscode.window.showInputBox({
+                prompt: 'Enter API token for the LM Studio server',
+                placeHolder: 'Paste API token (leave empty to clear)',
+                password: true,
+                ignoreFocusOut: true,
+            });
+
+            if (value === undefined) { return; } // cancelled
+
+            if (value === '') {
+                await context.secrets.delete(API_TOKEN_SECRET_KEY);
+                vscode.window.showInformationMessage('LM Chat: API token cleared');
+            } else {
+                await context.secrets.store(API_TOKEN_SECRET_KEY, value);
+                vscode.window.showInformationMessage('LM Chat: API token updated');
+            }
+            provider.refreshHealthCheck();
         })
     );
 

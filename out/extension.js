@@ -7313,8 +7313,10 @@ var crypto2 = __toESM(require("crypto"));
 
 // src/lmStudioClient.ts
 var vscode = __toESM(require("vscode"));
+var API_TOKEN_SECRET_KEY = "lmChat.apiToken";
 var LmStudioClient = class {
-  constructor() {
+  constructor(secrets) {
+    this.secrets = secrets;
     this.abortController = null;
   }
   getConfig() {
@@ -7326,14 +7328,23 @@ var LmStudioClient = class {
       temperature: config2.get("temperature", 0.7)
     };
   }
+  // Read the token fresh each call so "Set API Token" takes effect immediately.
+  async getAuthHeaders() {
+    const token = await this.secrets.get(API_TOKEN_SECRET_KEY);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
   async checkHealth() {
     const { endpoint } = this.getConfig();
     try {
       const response = await fetch(`${endpoint}/v1/models`, {
         method: "GET",
+        headers: await this.getAuthHeaders(),
         signal: AbortSignal.timeout(5e3)
       });
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          return { ok: false, error: `Authentication failed (HTTP ${response.status}). Run 'LM Chat: Set API Token' to update your token.` };
+        }
         return { ok: false, error: `Server returned ${response.status}` };
       }
       const data = await response.json();
@@ -7349,6 +7360,7 @@ var LmStudioClient = class {
     try {
       const response = await fetch(`${endpoint}/v1/models`, {
         method: "GET",
+        headers: await this.getAuthHeaders(),
         signal: AbortSignal.timeout(5e3)
       });
       if (!response.ok) return [];
@@ -7375,11 +7387,15 @@ var LmStudioClient = class {
     try {
       const response = await fetch(`${endpoint}/v1/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...await this.getAuthHeaders() },
         body: JSON.stringify(body),
         signal: this.abortController.signal
       });
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          callbacks.onError(`Authentication failed (HTTP ${response.status}). Run 'LM Chat: Set API Token' to update your token.`);
+          return;
+        }
         const text = await response.text();
         callbacks.onError(`LM Studio error (${response.status}): ${text}`);
         return;
@@ -24104,7 +24120,7 @@ var ChatViewProvider = class {
     this.currentModel = "";
     this.systemPromptCache = "";
     this.lastUsage = null;
-    this.client = new LmStudioClient();
+    this.client = new LmStudioClient(context.secrets);
     this.contextProvider = new ContextProvider();
     this.toolExecutor = new ToolExecutor();
     this.mcpManager = new McpManager(context);
@@ -25757,6 +25773,27 @@ function activate(context) {
   context.subscriptions.push(
     vscode5.commands.registerCommand("lmChat.selectModel", async () => {
       await provider.showModelPicker();
+    })
+  );
+  context.subscriptions.push(
+    vscode5.commands.registerCommand("lmChat.setApiToken", async () => {
+      const value = await vscode5.window.showInputBox({
+        prompt: "Enter API token for the LM Studio server",
+        placeHolder: "Paste API token (leave empty to clear)",
+        password: true,
+        ignoreFocusOut: true
+      });
+      if (value === void 0) {
+        return;
+      }
+      if (value === "") {
+        await context.secrets.delete(API_TOKEN_SECRET_KEY);
+        vscode5.window.showInformationMessage("LM Chat: API token cleared");
+      } else {
+        await context.secrets.store(API_TOKEN_SECRET_KEY, value);
+        vscode5.window.showInformationMessage("LM Chat: API token updated");
+      }
+      provider.refreshHealthCheck();
     })
   );
   context.subscriptions.push(

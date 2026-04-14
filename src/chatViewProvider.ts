@@ -44,7 +44,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         private readonly extensionUri: vscode.Uri,
         private readonly context: vscode.ExtensionContext
     ) {
-        this.client = new LmStudioClient();
+        this.client = new LmStudioClient(context.secrets);
         this.contextProvider = new ContextProvider();
         this.toolExecutor = new ToolExecutor();
         this.mcpManager = new McpManager(context);

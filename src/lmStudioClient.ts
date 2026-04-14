@@ -18,8 +18,12 @@ export interface StreamCallbacks {
     onUsage?: (usage: TokenUsage) => void;
 }
 
+export const API_TOKEN_SECRET_KEY = 'lmChat.apiToken';
+
 export class LmStudioClient {
     private abortController: AbortController | null = null;
+
+    constructor(private readonly secrets: vscode.SecretStorage) {}
 
     private getConfig() {
         const config = vscode.workspace.getConfiguration('lmChat');
@@ -31,15 +35,25 @@ export class LmStudioClient {
         };
     }
 
+    // Read the token fresh each call so "Set API Token" takes effect immediately.
+    private async getAuthHeaders(): Promise<Record<string, string>> {
+        const token = await this.secrets.get(API_TOKEN_SECRET_KEY);
+        return token ? { Authorization: `Bearer ${token}` } : {};
+    }
+
     async checkHealth(): Promise<{ ok: boolean; models?: string[]; error?: string }> {
         const { endpoint } = this.getConfig();
         try {
             const response = await fetch(`${endpoint}/v1/models`, {
                 method: 'GET',
+                headers: await this.getAuthHeaders(),
                 signal: AbortSignal.timeout(5000),
             });
 
             if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    return { ok: false, error: `Authentication failed (HTTP ${response.status}). Run 'LM Chat: Set API Token' to update your token.` };
+                }
                 return { ok: false, error: `Server returned ${response.status}` };
             }
 
@@ -57,6 +71,7 @@ export class LmStudioClient {
         try {
             const response = await fetch(`${endpoint}/v1/models`, {
                 method: 'GET',
+                headers: await this.getAuthHeaders(),
                 signal: AbortSignal.timeout(5000),
             });
             if (!response.ok) return [];
@@ -90,12 +105,16 @@ export class LmStudioClient {
         try {
             const response = await fetch(`${endpoint}/v1/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
                 body: JSON.stringify(body),
                 signal: this.abortController.signal,
             });
 
             if (!response.ok) {
+                if (response.status === 401 || response.status === 403) {
+                    callbacks.onError(`Authentication failed (HTTP ${response.status}). Run 'LM Chat: Set API Token' to update your token.`);
+                    return;
+                }
                 const text = await response.text();
                 callbacks.onError(`LM Studio error (${response.status}): ${text}`);
                 return;
